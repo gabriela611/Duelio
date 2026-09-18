@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 :root {
+  color-scheme: light;
   --background: #F6F6F5;
   --foreground: #0B0B0B;
   --surface: #FFFFFF;
@@ -18,6 +19,11 @@
 }
 
 @layer base {
+  html {
+    color-scheme: light;
+    background-color: var(--background);
+  }
+
   body {
     background-color: var(--background);
     color: var(--text-primary);

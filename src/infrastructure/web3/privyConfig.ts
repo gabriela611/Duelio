@@ -52,7 +52,7 @@ export const privyConfig = {
     defaultChain: monadTestnet,
     supportedChains: [monadTestnet],
     appearance: {
-      theme: "dark" as const,
+      theme: "light" as const,
       accentColor: "#836EF9" as `#${string}`, // Monad Purple
       logo: "/duelio-logo.png",
       showWalletLoginFirst: false,
