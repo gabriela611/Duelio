@@ -10,40 +10,79 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // iOS Financial App Design System
+        background: "#F6F6F5",
+        surface: {
+          DEFAULT: "#FFFFFF",
+          secondary: "#F1F1F1",
+          tertiary: "#EBEBEB",
+        },
+        text: {
+          primary: "#0B0B0B",
+          secondary: "#858585",
+          tertiary: "#ADADAD",
+        },
+        border: {
+          DEFAULT: "rgba(0, 0, 0, 0.06)",
+          light: "rgba(0, 0, 0, 0.04)",
+        },
+        accent: "#EF00F5",
+        positive: "#14CF1C",
+        negative: "#FF3B30",
+
+        // Monad brand colors (minimal usage)
         monad: {
           50: "#f3f0ff",
           100: "#e9e4ff",
           200: "#d5cbff",
           300: "#b7a4ff",
           400: "#9875ff",
-          500: "#836EF9", // Official Monad Purple
+          500: "#836EF9",
           600: "#6e4ef4",
           700: "#5d3be0",
           800: "#4d30b9",
           900: "#412b95",
-          950: "#130938",
         },
-        duel: {
-          bg: "#0B0E14",
-          surface: "#141A24",
-          card: "#1A2232",
-          border: "#263248",
-          gold: "#FFD700",
-          cyan: "#00F0FF",
-          red: "#FF3366",
-          green: "#00E676",
-        }
       },
       boxShadow: {
-        'glow-monad': '0 0 20px -5px rgba(131, 110, 249, 0.5)',
-        'glow-gold': '0 0 20px -5px rgba(255, 215, 0, 0.5)',
-        'glow-cyan': '0 0 20px -5px rgba(0, 240, 255, 0.5)',
-        'glow-red': '0 0 20px -5px rgba(255, 51, 102, 0.5)',
+        'soft': '0 1px 2px rgba(0, 0, 0, 0.02), 0 4px 12px rgba(0, 0, 0, 0.025)',
+        'card': '0 2px 8px rgba(0, 0, 0, 0.03), 0 1px 3px rgba(0, 0, 0, 0.02)',
+        'elevated': '0 4px 16px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(0, 0, 0, 0.03)',
+        '2xs': '0 1px 2px rgba(0, 0, 0, 0.05)',
+        'xs': '0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)',
       },
-      animation: {
-        'pulse-subtle': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'bounce-light': 'bounce 2s infinite',
-      }
+      borderRadius: {
+        'DEFAULT': '8px',
+        'sm': '10px',
+        'md': '12px',
+        'lg': '14px',
+        'xl': '16px',
+        '2xl': '18px',
+        '3xl': '20px',
+        '4xl': '24px',
+        '5xl': '30px',
+      },
+      spacing: {
+        '4.5': '1.125rem',
+        '13': '3.25rem',
+        '15': '3.75rem',
+        '18': '4.5rem',
+      },
+      fontFamily: {
+        sans: [
+          'Inter',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'SF Pro Display',
+          'SF Pro Text',
+          'Helvetica Neue',
+          'Arial',
+          'sans-serif',
+        ],
+      },
+      transitionTimingFunction: {
+        'ios': 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+      },
     },
   },
   plugins: [],

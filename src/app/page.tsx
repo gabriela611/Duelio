@@ -32,8 +32,8 @@ export default function Home() {
     >
       {activeTab === "arena" && <ArenaView userAddress={userAddress} />}
       {activeTab === "spectate" && <SpectatorWidget />}
-      {activeTab === "leaderboard" && <LeaderboardView />}
-      {activeTab === "profile" && <ProfileBadge />}
+      {activeTab === "leaderboard" && <LeaderboardView onBack={() => setActiveTab("arena")} />}
+      {activeTab === "profile" && <ProfileBadge onBack={() => setActiveTab("arena")} />}
     </MobileShell>
   );
 }
