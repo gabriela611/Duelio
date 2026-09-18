@@ -3,7 +3,7 @@ import { monadTestnet, DUEL_ARENA_CONTRACT_ADDRESS } from "./monadChain";
 /**
  * Privy Security Configuration & Session Signer Policies for Duelio
  *
- * Requirements for Privy Bounty ($5,000 USD):
+ * Privy integration scope:
  * 1. Embedded Wallet provisioning for zero-friction judge & user onboarding.
  * 2. Scoped Delegated Actions / Session Signers restricted by contract, chain, and selector.
  * 3. Anti-abuse bounds (max testnet MON allowance, 15m session TTL, emergency revocation).

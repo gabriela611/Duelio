@@ -70,7 +70,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
       }
 
       onSettleSuccess?.(result);
-    }, 800); // 800ms to mirror Monad block finality!
+    }, 800); // Prototype transition delay; chain confirmation is asynchronous.
   };
 
   const isPlayerWinning = pnlA >= pnlB;
@@ -236,7 +236,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
             {isSettling ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>SETTLING ON MONAD (800ms)...</span>
+                <span>CONFIRMING SETTLEMENT...</span>
               </>
             ) : (
               <>

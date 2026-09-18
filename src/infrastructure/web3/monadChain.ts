@@ -1,5 +1,8 @@
 import { defineChain } from "viem";
 
+const MONAD_TESTNET_RPC_URL =
+  process.env.NEXT_PUBLIC_MONAD_RPC_URL || "https://rpc.testnet.monad.xyz";
+
 /**
  * Official Monad Testnet Chain Definition for Viem / Wagmi
  * Chain ID: 10143
@@ -16,10 +19,10 @@ export const monadTestnet = defineChain({
   },
   rpcUrls: {
     default: {
-      http: ["https://rpc.testnet.monad.xyz"],
+      http: [MONAD_TESTNET_RPC_URL],
     },
     public: {
-      http: ["https://rpc.testnet.monad.xyz"],
+      http: [MONAD_TESTNET_RPC_URL],
     },
   },
   blockExplorers: {

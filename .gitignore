@@ -1,36 +1,50 @@
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Dependencies and package-manager state
+node_modules/
+.pnp/
+.pnp.*
 .yarn/install-state.gz
 
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
+# Local environment and credentials
+.env
+.env.*
+!.env.example
 *.pem
-.atl/
 
-# debug
+# Next.js, build, coverage, and tooling output
+.next/
+out/
+build/
+dist/
+coverage/
+.cache/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Logs and runtime dumps
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+*.pid
+*.seed
 
-# local env files
-.env*.local
-.env
+# Deployment and local service state
+.vercel/
 
-# vercel
-.vercel
+# IDE and operating-system metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# Local agent and workspace metadata
+.agents/
+.atl/
+.codex/
+.claude/
+.opencode/
+
+# Local ODD planning artifacts
+odd/
