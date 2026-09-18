@@ -222,7 +222,7 @@ export const SpectatorWidget: React.FC = () => {
         <button
           onClick={handlePlacePrediction}
           aria-live="polite"
-          className="w-full py-4 rounded-2xl bg-text-primary hover:bg-text-primary/90 text-white text-xs font-bold tracking-wider uppercase shadow-2xs flex items-center justify-center gap-2 active:scale-95 transition-[background-color,color,transform] duration-100"
+          className="w-full py-4 rounded-2xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold tracking-wider uppercase shadow-xs flex items-center justify-center gap-2 active:scale-95 transition-[background-color,color,transform] duration-100"
         >
           {placed ? (
             <>

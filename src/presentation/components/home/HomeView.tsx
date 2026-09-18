@@ -74,7 +74,7 @@ export function HomeView({ liked, onReaction, userAddress, authenticated, authRe
           <button
             onClick={() => (authenticated ? onNavigate("arena") : onConnect())}
             disabled={!authReady}
-            className="home-action bg-text-primary hover:bg-text-primary/90 text-white shadow-card active:scale-[0.97] transition-all disabled:opacity-50"
+            className="home-action bg-monad-600 hover:bg-monad-700 text-white shadow-card active:scale-[0.97] transition-all disabled:opacity-50"
           >
             {authenticated ? <Swords size={18} /> : <ArrowDownLeft size={18} />}
             <span>{authenticated ? "Start a duel" : "Connect wallet"}</span>
@@ -315,7 +315,7 @@ export function HomeView({ liked, onReaction, userAddress, authenticated, authRe
                       </button>
                       <button
                         onClick={() => onNavigate("spectate")}
-                        className="home-action bg-text-primary hover:bg-text-primary/90 text-white shadow-card active:scale-95 transition-all text-xs sm:text-sm font-bold"
+                        className="home-action bg-monad-600 hover:bg-monad-700 text-white shadow-card active:scale-95 transition-all text-xs sm:text-sm font-bold"
                       >
                         <Sparkles size={17} className="text-amber-300" />
                         <span>Stake & Bet on Winner</span>

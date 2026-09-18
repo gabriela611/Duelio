@@ -393,7 +393,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
                   setPnlA(1.5);
                   setPnlB(0.8);
                 }}
-                className="w-full py-4 rounded-2xl bg-text-primary hover:bg-text-primary/90 active:scale-[0.98] transition-[background-color,color,transform] duration-100 text-white font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-2xs"
+                className="w-full py-4 rounded-2xl bg-monad-600 hover:bg-monad-700 active:scale-[0.98] transition-[background-color,color,transform] duration-100 text-white font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-xs"
               >
                 <RefreshCw className="w-4 h-4" />
                 <span>NEXT DUEL</span>

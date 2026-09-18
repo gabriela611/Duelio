@@ -48,7 +48,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({
               onClick={() => onTabChange("home")}
               className="flex items-center gap-2.5 text-left group active:scale-95 transition-transform duration-100"
             >
-              <div className="w-9 h-9 rounded-xl bg-text-primary flex items-center justify-center shadow-2xs">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-monad-500 to-monad-700 flex items-center justify-center shadow-xs">
                 <Swords className="w-4 h-4 text-white" />
               </div>
               <div>
@@ -92,9 +92,9 @@ export const MobileShell: React.FC<MobileShellProps> = ({
             <button
               onClick={onConnect}
               aria-label={userAddress ? "Disconnect wallet" : "Connect wallet"}
-              className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 active:scale-95 transition-[background-color,color,transform] duration-100 text-xs font-semibold text-white shadow-2xs flex items-center gap-1.5"
+              className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 active:scale-95 transition-[background-color,color,transform] duration-100 text-xs font-semibold text-white shadow-xs flex items-center gap-1.5"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-monad-400" />
+              <ShieldCheck className="w-3.5 h-3.5 text-white" />
               <span>
                 {userAddress
                   ? `${userAddress.slice(0, 4)}…${userAddress.slice(-3)}`

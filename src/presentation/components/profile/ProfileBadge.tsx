@@ -171,7 +171,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
                 className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 ${
                   isFollowing
                     ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                    : "bg-text-primary text-white"
+                    : "bg-monad-600 hover:bg-monad-700 text-white shadow-xs"
                 }`}
               >
                 {normalizeAddress(viewerAddress) === normalizeAddress(profile.address) ? "Your profile" : !viewerAddress ? "Connect to follow" : isFollowing ? "Following · local" : "Follow"}
@@ -179,7 +179,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
             ) : viewerAddress ? (
               <button
                 onClick={onArena}
-                className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
+                className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
               >
                 <Swords className="w-3.5 h-3.5" />
                 <span>Enter Arena</span>
@@ -187,9 +187,9 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
             ) : (
               <button
                 onClick={onConnect}
-                className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
+                className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
               >
-                <ShieldCheck className="w-3.5 h-3.5 text-monad-400" />
+                <ShieldCheck className="w-3.5 h-3.5 text-white" />
                 <span>Connect Wallet</span>
               </button>
             )}
