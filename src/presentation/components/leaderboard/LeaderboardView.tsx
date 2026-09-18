@@ -4,7 +4,6 @@
 import React, { useEffect, useState } from "react";
 import {
   Trophy,
-  Zap,
   CheckCircle2,
   ChevronLeft,
   Flame,
@@ -14,8 +13,6 @@ import {
 import { Trader } from "@/domain/trader/Trader";
 import {
   fetchLeaderboard,
-  fetchIndexerStatus,
-  EnvioSyncStatus,
 } from "@/infrastructure/envio/client";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
@@ -28,16 +25,11 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
   const [category, setCategory] = useState("All Duels");
   const [timeframe, setTimeframe] = useState("24h");
   const [, setTraders] = useState<Trader[]>([]);
-  const [syncStatus, setSyncStatus] = useState<EnvioSyncStatus | null>(null);
 
   useEffect(() => {
     async function loadData() {
-      const [list, status] = await Promise.all([
-        fetchLeaderboard(),
-        fetchIndexerStatus(),
-      ]);
+      const list = await fetchLeaderboard();
       setTraders(list);
-      setSyncStatus(status);
     }
     loadData();
   }, []);
@@ -336,13 +328,6 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
         ))}
       </div>
 
-      {/* Footer indicator */}
-      <div className="pt-2 flex items-center justify-center gap-1.5 text-xs text-text-tertiary font-mono">
-        <Zap className="w-3.5 h-3.5 text-monad-500" />
-        <span>
-          Block #{syncStatus?.syncedBlock ?? 1014388}
-        </span>
-      </div>
     </div>
   );
 };

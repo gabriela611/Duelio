@@ -4,13 +4,13 @@ import React from "react";
 import {
   Swords,
   Trophy,
-  Zap,
+  House,
   ShieldCheck,
   User,
   Activity,
 } from "lucide-react";
 
-export type ActiveTab = "arena" | "spectate" | "leaderboard" | "profile";
+export type ActiveTab = "home" | "arena" | "spectate" | "leaderboard" | "profile";
 
 interface MobileShellProps {
   children: React.ReactNode;
@@ -18,7 +18,6 @@ interface MobileShellProps {
   onTabChange: (tab: ActiveTab) => void;
   userAddress?: string;
   onConnect?: () => void;
-  syncStatus?: { isLive: boolean; block: number };
 }
 
 export const MobileShell: React.FC<MobileShellProps> = ({
@@ -27,9 +26,9 @@ export const MobileShell: React.FC<MobileShellProps> = ({
   onTabChange,
   userAddress,
   onConnect,
-  syncStatus,
 }) => {
   const tabs: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
+    { id: "home", label: "Home", icon: <House className="w-4 h-4" /> },
     { id: "arena", label: "Arena", icon: <Swords className="w-4 h-4" /> },
     { id: "spectate", label: "Predictions", icon: <Activity className="w-4 h-4" /> },
     { id: "leaderboard", label: "Rankings", icon: <Trophy className="w-4 h-4" /> },
@@ -46,31 +45,26 @@ export const MobileShell: React.FC<MobileShellProps> = ({
           {/* Brand Logo */}
           <div className="flex items-center gap-3 shrink-0">
             <button
-              onClick={() => onTabChange("arena")}
+              onClick={() => onTabChange("home")}
               className="flex items-center gap-2.5 text-left group active:scale-95 transition-transform duration-100"
             >
-              <div className="w-9 h-9 rounded-xl bg-monad-600 flex items-center justify-center shadow-2xs">
+              <div className="w-9 h-9 rounded-xl bg-text-primary flex items-center justify-center shadow-2xs">
                 <Swords className="w-4 h-4 text-white" />
               </div>
               <div>
                 <span className="font-bold text-base tracking-tight text-text-primary block leading-tight">
-                  DUELIO
+                  duelio
                 </span>
                 <span className="text-[10px] font-semibold text-monad-600 tracking-tight block leading-tight">
-                  Monad Arena
+                  Play. Connect. Rise.
                 </span>
               </div>
             </button>
 
-            {/* Monad Chain Tag */}
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-secondary text-[11px] font-medium text-text-secondary">
-              <span className="w-1.5 h-1.5 rounded-full bg-positive animate-pulse"></span>
-              <span>Testnet</span>
-            </div>
           </div>
 
           {/* Clean Tab Navigation */}
-          <nav aria-label="Main navigation" className="hidden lg:flex items-center bg-surface-secondary p-1 rounded-2xl">
+          <nav aria-label="Main navigation" className="hidden lg:flex items-center bg-surface-secondary/90 p-1.5 rounded-2xl border border-border/80 backdrop-blur-md">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
@@ -78,10 +72,10 @@ export const MobileShell: React.FC<MobileShellProps> = ({
                   key={tab.id}
                   aria-pressed={isActive}
                   onClick={() => onTabChange(tab.id)}
-                  className={`px-3 sm:px-4 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-[background-color,color,transform] duration-150 flex items-center gap-1.5 active:scale-95 ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 flex items-center gap-1.5 active:scale-95 ${
                     isActive
                       ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                      : "text-text-secondary hover:text-text-primary hover:bg-surface-tertiary/50"
+                      : "text-text-secondary hover:text-text-primary hover:bg-surface-tertiary/60"
                   }`}
                 >
                   <span aria-hidden="true" className={isActive ? "text-monad-600" : "text-text-secondary"}>
@@ -95,13 +89,6 @@ export const MobileShell: React.FC<MobileShellProps> = ({
 
           {/* Right: Status & Connect Button */}
           <div className="flex items-center gap-2.5 shrink-0">
-            {syncStatus && (
-              <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-secondary text-[11px] font-mono text-text-secondary">
-                <Zap className="w-3 h-3 text-monad-500" />
-                <span>#{syncStatus.block.toString().slice(-4)}</span>
-              </div>
-            )}
-
             <button
               onClick={onConnect}
               aria-label={userAddress ? "Disconnect wallet" : "Connect wallet"}
@@ -125,24 +112,24 @@ export const MobileShell: React.FC<MobileShellProps> = ({
       </main>
 
       {/* Mobile Bottom Bar */}
-      <nav aria-label="Main navigation" className="app-tab-bar safe-inline lg:hidden fixed bottom-0 left-0 right-0 border-t border-border grid grid-cols-4 px-2 z-40">
+      <nav aria-label="Main navigation" className="app-tab-bar safe-inline lg:hidden fixed bottom-0 left-0 right-0 border-t border-border grid grid-cols-5 px-1 sm:px-2 z-40">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
-                  aria-pressed={isActive}
+              aria-pressed={isActive}
               onClick={() => onTabChange(tab.id)}
-              className={`flex min-w-0 flex-col justify-center items-center gap-1 py-2 px-1 rounded-2xl transition-colors duration-150 active:scale-95 ${
+              className={`flex min-w-0 flex-col justify-center items-center gap-1 py-1.5 px-0.5 rounded-2xl transition-all duration-150 active:scale-95 ${
                 isActive
-                  ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                  : "text-text-secondary hover:bg-surface-secondary"
+                  ? "bg-slate-200/90 text-text-primary border border-slate-300/80 font-bold shadow-xs"
+                  : "text-text-secondary hover:bg-surface-secondary/70"
               }`}
             >
               <span aria-hidden="true" className={`[&>svg]:h-5 [&>svg]:w-5 ${isActive ? "text-monad-600" : "text-text-secondary"}`}>
                 {tab.icon}
               </span>
-              <span className="text-[10px] font-semibold">{tab.label}</span>
+              <span className="text-[10px] font-semibold truncate max-w-full leading-tight">{tab.label}</span>
             </button>
           );
         })}

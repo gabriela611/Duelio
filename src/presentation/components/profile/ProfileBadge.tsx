@@ -22,21 +22,65 @@ import {
 import { DUELIO_SESSION_POLICY } from "@/infrastructure/web3/privyConfig";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
+import { canFollow, normalizeAddress } from "@/domain/social/identity";
+import type { SampleProfile } from "@/domain/social/sampleActivity";
+
 interface ProfileBadgeProps {
+  following?: boolean;
+  onToggleFollow?: () => void;
+  viewerAddress?: string;
+  profile?: SampleProfile;
+  onConnect?: () => void;
+  onArena?: () => void;
   onBack?: () => void;
 }
 
-export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
+export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
+  onBack,
+  following = false,
+  onToggleFollow,
+  viewerAddress,
+  profile,
+  onConnect,
+  onArena,
+}) => {
   const [timeframe, setTimeframe] = useState<"24h" | "7d" | "30d">("7d");
-  const [isFollowing, setIsFollowing] = useState(false);
+  const followAllowed = canFollow(viewerAddress, profile?.address);
+  const isFollowing = followAllowed && following;
+  const handleFollow = () => {
+    if (canFollow(viewerAddress, profile?.address)) onToggleFollow?.();
+  };
   const [sessionActive, setSessionActive] = useState(true);
 
   const handleToggleSession = () => {
     setSessionActive((prev) => !prev);
   };
 
+  const activeProfile: SampleProfile = profile ?? {
+    name: "MonadWhale",
+    initials: "MW",
+    address: viewerAddress ?? "0x836E101400000000000000000000000000000001",
+    elo: 1845,
+    wins: 68,
+    duels: 82,
+    rank: 302,
+  };
+
   return (
     <div className="max-w-4xl mx-auto w-full space-y-6">
+      {profile ? (
+        <p className="rounded-2xl bg-surface border border-border p-3.5 sm:p-4 text-xs leading-relaxed text-text-secondary shadow-card">
+          Sample duelist profile · All statistics and demonstration positions are local to this session.
+        </p>
+      ) : (
+        <div className="rounded-2xl bg-surface border border-border p-3.5 sm:p-4 text-xs font-medium text-text-secondary shadow-card flex flex-wrap items-center justify-between gap-2">
+          <span>Connected Duelist Profile</span>
+          <span className="font-mono text-monad-600 font-semibold">
+            {viewerAddress ? `${viewerAddress.slice(0, 6)}…${viewerAddress.slice(-4)}` : "Demo Account (0x836E…0001)"}
+          </span>
+        </div>
+      )}
+
       {/* Clean Profile Header Card */}
       <div className="rounded-3xl overflow-hidden bg-surface shadow-card border border-border">
         {/* Header Area with Metrics */}
@@ -46,7 +90,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
             <button
               onClick={onBack}
               className="p-2 -ml-2 rounded-xl bg-white/10 hover:bg-white/20 text-white active:scale-95 transition-[background-color,color,transform] duration-100"
-              aria-label="Back to Arena"
+              aria-label="Back to Home"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -66,10 +110,10 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
 
           {/* Bottom: Stats & Avatar */}
           <div className="relative z-10 flex items-end justify-between">
-            <div className="flex items-center gap-5 text-white">
+            <div className="flex items-center gap-4 sm:gap-5 text-white">
               <div>
                 <span className="font-mono font-bold text-xl leading-tight block">
-                  1,845
+                  {activeProfile.elo.toLocaleString("en-US")}
                 </span>
                 <span className="text-xs text-white/80 font-medium">
                   Master ELO
@@ -77,7 +121,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
               </div>
               <div>
                 <span className="font-mono font-bold text-xl leading-tight block text-positive">
-                  82.9%
+                  {((activeProfile.wins / activeProfile.duels) * 100).toFixed(1)}%
                 </span>
                 <span className="text-xs text-white/80 font-medium">
                   Win Rate
@@ -85,7 +129,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
               </div>
               <div className="hidden sm:block">
                 <span className="font-mono font-bold text-xl leading-tight block">
-                  #302
+                  #{activeProfile.rank}
                 </span>
                 <span className="text-xs text-white/80 font-medium">
                   Rank
@@ -99,7 +143,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face"
                 width={80}
                 height={80}
-                alt="MonadWhale"
+                alt={activeProfile.name}
                 className="w-full h-full rounded-xl object-cover"
               />
             </div>
@@ -111,7 +155,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-text-primary">
-                MonadWhale
+                {activeProfile.name}
               </h2>
               <div className="w-5 h-5 rounded-full bg-monad-600 text-white flex items-center justify-center">
                 <CheckCircle2 className="w-3.5 h-3.5" />
@@ -119,32 +163,51 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
               <Share2 className="w-4 h-4 text-text-tertiary hover:text-text-primary cursor-pointer ml-1 active:scale-90 transition-[background-color,color,transform] duration-100" />
             </div>
 
-            <button
-              onClick={() => setIsFollowing(!isFollowing)}
-              aria-pressed={isFollowing}
-              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 ${
-                isFollowing
-                  ? "bg-surface-secondary text-text-primary"
-                  : "bg-text-primary text-white"
-              }`}
-            >
-              {isFollowing ? "Following" : "Follow"}
-            </button>
+            {profile ? (
+              <button
+                onClick={handleFollow}
+                disabled={!followAllowed}
+                aria-pressed={isFollowing}
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 ${
+                  isFollowing
+                    ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                    : "bg-text-primary text-white"
+                }`}
+              >
+                {normalizeAddress(viewerAddress) === normalizeAddress(profile.address) ? "Your profile" : !viewerAddress ? "Connect to follow" : isFollowing ? "Following · local" : "Follow"}
+              </button>
+            ) : viewerAddress ? (
+              <button
+                onClick={onArena}
+                className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
+              >
+                <Swords className="w-3.5 h-3.5" />
+                <span>Enter Arena</span>
+              </button>
+            ) : (
+              <button
+                onClick={onConnect}
+                className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-monad-400" />
+                <span>Connect Wallet</span>
+              </button>
+            )}
           </div>
 
           <div className="break-words text-sm font-mono font-semibold text-monad-700">
-            $monadwhale • 0x836E...0001
+            {activeProfile.address.slice(0, 6)}…{activeProfile.address.slice(-4)}
           </div>
 
           <p className="text-sm text-text-secondary font-medium leading-relaxed max-w-2xl">
-            High-frequency PvP trader on Monad Testnet. Specializing in sub-minute tactical allocation clashes.
+            High-frequency PvP trader in the practice arena. Specializing in sub-minute tactical allocation clashes.
           </p>
 
           {/* Metadata */}
           <div className="flex items-center gap-4 sm:gap-6 pt-1 text-xs text-text-secondary font-medium flex-wrap">
             <div className="flex items-center gap-1.5">
               <Swords className="w-3.5 h-3.5 text-monad-500" />
-              <span>82 Duels</span>
+              <span>{activeProfile.duels} Duels · {activeProfile.wins} Wins</span>
             </div>
             <div className="flex items-center gap-1.5">
               <Flame className="w-3.5 h-3.5 text-amber-500" />
@@ -407,12 +470,12 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 {sessionActive ? (
                   <>
                     <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>Revoke</span>
+                    <span>Preview revoke</span>
                   </>
                 ) : (
                   <>
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Authorize</span>
+                    <span>Preview authorize</span>
                   </>
                 )}
               </button>
