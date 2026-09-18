@@ -214,7 +214,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
             aria-pressed={category === cat}
             className={`px-4 py-2 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 whitespace-nowrap active:scale-95 ${
               category === cat
-                ? "bg-text-primary text-white shadow-2xs"
+                ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
                 : "bg-surface text-text-secondary border border-border hover:bg-surface-secondary"
             }`}
           >
@@ -238,7 +238,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
               aria-pressed={timeframe === tf}
               className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] active:scale-95 ${
                 timeframe === tf
-                  ? "bg-surface text-text-primary shadow-2xs"
+                  ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
                   : "text-text-secondary hover:text-text-primary"
               }`}
             >

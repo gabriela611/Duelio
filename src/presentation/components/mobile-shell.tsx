@@ -80,12 +80,12 @@ export const MobileShell: React.FC<MobileShellProps> = ({
                   onClick={() => onTabChange(tab.id)}
                   className={`px-3 sm:px-4 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-[background-color,color,transform] duration-150 flex items-center gap-1.5 active:scale-95 ${
                     isActive
-                      ? "bg-surface text-text-primary shadow-2xs"
-                      : "text-text-secondary hover:text-text-primary"
+                      ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                      : "text-text-secondary hover:text-text-primary hover:bg-surface-tertiary/50"
                   }`}
                 >
-                  <span aria-hidden="true" className={isActive ? "bg-monad-50 text-monad-700" : "text-text-secondary hover:bg-surface-secondary"}>
-                    <span aria-hidden="true" className="[&>svg]:h-5 [&>svg]:w-5">{tab.icon}</span>
+                  <span aria-hidden="true" className={isActive ? "text-monad-600" : "text-text-secondary"}>
+                    <span aria-hidden="true" className="[&>svg]:h-4 [&>svg]:w-4">{tab.icon}</span>
                   </span>
                   <span>{tab.label}</span>
                 </button>
@@ -134,10 +134,14 @@ export const MobileShell: React.FC<MobileShellProps> = ({
                   aria-pressed={isActive}
               onClick={() => onTabChange(tab.id)}
               className={`flex min-w-0 flex-col justify-center items-center gap-1 py-2 px-1 rounded-2xl transition-colors duration-150 active:scale-95 ${
-                isActive ? "bg-monad-50 text-monad-700" : "text-text-secondary hover:bg-surface-secondary"
+                isActive
+                  ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                  : "text-text-secondary hover:bg-surface-secondary"
               }`}
             >
-              <span aria-hidden="true" className="[&>svg]:h-5 [&>svg]:w-5">{tab.icon}</span>
+              <span aria-hidden="true" className={`[&>svg]:h-5 [&>svg]:w-5 ${isActive ? "text-monad-600" : "text-text-secondary"}`}>
+                {tab.icon}
+              </span>
               <span className="text-[10px] font-semibold">{tab.label}</span>
             </button>
           );

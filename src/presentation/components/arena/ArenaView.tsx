@@ -299,8 +299,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
                   aria-pressed={selectedAsset === asset}
                   className={`min-w-0 p-2 sm:p-3 rounded-xl flex flex-col items-center gap-0.5 transition-[background-color,color,transform] duration-100 active:scale-95 ${
                     selectedAsset === asset
-                      ? "bg-text-primary text-white shadow-2xs"
-                      : "bg-surface-secondary text-text-primary hover:bg-surface-tertiary"
+                      ? "bg-slate-200/90 text-text-primary border-2 border-slate-400 font-bold shadow-xs"
+                      : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
                   }`}
                 >
                   <span className="font-bold text-xs">{asset}</span>

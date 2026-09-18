@@ -192,8 +192,8 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                     aria-pressed={timeframe === tf}
                     className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] duration-150 active:scale-95 ${
                       timeframe === tf
-                        ? "bg-surface text-text-primary shadow-2xs"
-                        : "text-text-secondary"
+                        ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                        : "text-text-secondary hover:text-text-primary"
                     }`}
                   >
                     {tf}

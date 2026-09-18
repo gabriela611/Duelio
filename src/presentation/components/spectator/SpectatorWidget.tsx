@@ -97,8 +97,8 @@ export const SpectatorWidget: React.FC = () => {
             aria-pressed={selectedTrader === "A"}
             className={`min-w-0 break-words p-3 sm:p-4 rounded-2xl text-sm font-bold transition-[background-color,color,transform] duration-100 active:scale-95 ${
               selectedTrader === "A"
-                ? "bg-text-primary text-white shadow-2xs"
-                : "bg-surface-secondary text-text-primary border border-border hover:bg-surface-tertiary"
+                ? "bg-slate-200/90 text-text-primary border-2 border-slate-400 font-bold shadow-xs"
+                : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
             }`}
           >
             <div className="font-bold">Back MonadWhale</div>
@@ -111,8 +111,8 @@ export const SpectatorWidget: React.FC = () => {
             aria-pressed={selectedTrader === "B"}
             className={`min-w-0 break-words p-3 sm:p-4 rounded-2xl text-sm font-bold transition-[background-color,color,transform] duration-100 active:scale-95 ${
               selectedTrader === "B"
-                ? "bg-text-primary text-white shadow-2xs"
-                : "bg-surface-secondary text-text-primary border border-border hover:bg-surface-tertiary"
+                ? "bg-slate-200/90 text-text-primary border-2 border-slate-400 font-bold shadow-xs"
+                : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
             }`}
           >
             <div className="font-bold">Back CryptoKnight</div>
@@ -135,8 +135,8 @@ export const SpectatorWidget: React.FC = () => {
                 aria-pressed={stakedAmount === amt}
                 className={`py-2.5 rounded-xl text-sm font-bold font-mono transition-[background-color,color,transform] duration-100 active:scale-95 ${
                   stakedAmount === amt
-                    ? "bg-monad-600 text-white shadow-2xs"
-                    : "bg-surface-secondary text-text-primary border border-border hover:bg-surface-tertiary"
+                    ? "bg-slate-200/90 text-text-primary border-2 border-slate-400 font-bold shadow-xs"
+                    : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
                 }`}
               >
                 {amt}
