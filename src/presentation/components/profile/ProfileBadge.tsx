@@ -1,103 +1,487 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import React, { useState } from "react";
-import { Shield, Key, AlertTriangle, CheckCircle, ExternalLink, Award } from "lucide-react";
+import {
+  ChevronLeft,
+  Bell,
+  CheckCircle2,
+  Share2,
+  Clock,
+  Swords,
+  Trophy,
+  Calendar,
+  Key,
+  AlertTriangle,
+  Zap,
+  TrendingUp,
+  ShieldCheck,
+  Flame,
+  ArrowUpRight,
+} from "lucide-react";
 import { DUELIO_SESSION_POLICY } from "@/infrastructure/web3/privyConfig";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
-export const ProfileBadge: React.FC = () => {
+import { canFollow, normalizeAddress } from "@/domain/social/identity";
+import type { SampleProfile } from "@/domain/social/sampleActivity";
+
+interface ProfileBadgeProps {
+  following?: boolean;
+  onToggleFollow?: () => void;
+  viewerAddress?: string;
+  profile?: SampleProfile;
+  onConnect?: () => void;
+  onArena?: () => void;
+  onBack?: () => void;
+}
+
+export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
+  onBack,
+  following = false,
+  onToggleFollow,
+  viewerAddress,
+  profile,
+  onConnect,
+  onArena,
+}) => {
+  const [timeframe, setTimeframe] = useState<"24h" | "7d" | "30d">("7d");
+  const followAllowed = canFollow(viewerAddress, profile?.address);
+  const isFollowing = followAllowed && following;
+  const handleFollow = () => {
+    if (canFollow(viewerAddress, profile?.address)) onToggleFollow?.();
+  };
   const [sessionActive, setSessionActive] = useState(true);
-  const [revoked, setRevoked] = useState(false);
 
-  const handleRevokeSession = () => {
-    setSessionActive(false);
-    setRevoked(true);
+  const handleToggleSession = () => {
+    setSessionActive((prev) => !prev);
+  };
+
+  const activeProfile: SampleProfile = profile ?? {
+    name: "MonadWhale",
+    initials: "MW",
+    address: viewerAddress ?? "0x836E101400000000000000000000000000000001",
+    elo: 1845,
+    wins: 68,
+    duels: 82,
+    rank: 302,
   };
 
   return (
-    <div className="p-4 space-y-4">
-      {/* Profile Card */}
-      <div className="p-4 rounded-2xl bg-duel-surface border border-duel-border space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-monad-600 to-duel-cyan flex items-center justify-center font-black text-base text-white shadow-glow-monad">
-            MW
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-sm text-white">MonadWhale</h3>
-              <span className="text-[10px] bg-sky-500/20 text-sky-400 font-bold px-2 py-0.5 rounded-full border border-sky-500/30 flex items-center gap-1">
-                @monad_whale (X Linked)
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 font-mono">0x836E...0001</p>
-          </div>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          <div className="p-2.5 rounded-xl bg-duel-card border border-duel-border text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase">ELO Rating</span>
-            <div className="text-sm font-black text-monad-300 font-mono">1845</div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-duel-card border border-duel-border text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase">Win Rate</span>
-            <div className="text-sm font-black text-emerald-400 font-mono">85%</div>
-          </div>
-          <div className="p-2.5 rounded-xl bg-duel-card border border-duel-border text-center">
-            <span className="text-[10px] text-slate-400 font-bold uppercase">Earned MON</span>
-            <div className="text-sm font-black text-duel-gold font-mono">128.5</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Privy Beyond-Auth Session Policy Manager */}
-      <div className="p-3.5 rounded-2xl bg-duel-surface border border-monad-500/30 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Key className="w-4 h-4 text-monad-400" />
-            <h4 className="text-xs font-black text-white uppercase tracking-wider">
-              Privy Session Signer Policy
-            </h4>
-          </div>
-          <span
-            className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-              sessionActive
-                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                : "bg-duel-red/20 text-duel-red border border-duel-red/30"
-            }`}
-          >
-            {sessionActive ? "POLICY ACTIVE" : "SESSION REVOKED"}
+    <div className="max-w-4xl mx-auto w-full space-y-6">
+      {profile ? (
+        <p className="rounded-2xl bg-surface border border-border p-3.5 sm:p-4 text-xs leading-relaxed text-text-secondary shadow-card">
+          Sample duelist profile · All statistics and demonstration positions are local to this session.
+        </p>
+      ) : (
+        <div className="rounded-2xl bg-surface border border-border p-3.5 sm:p-4 text-xs font-medium text-text-secondary shadow-card flex flex-wrap items-center justify-between gap-2">
+          <span>Connected Duelist Profile</span>
+          <span className="font-mono text-monad-600 font-semibold">
+            {viewerAddress ? `${viewerAddress.slice(0, 6)}…${viewerAddress.slice(-4)}` : "Demo Account (0x836E…0001)"}
           </span>
         </div>
+      )}
 
-        <div className="space-y-1.5 text-[11px] font-mono text-slate-300 bg-duel-card p-2.5 rounded-xl border border-duel-border">
-          <div className="flex justify-between">
-            <span className="text-slate-400">Target Chain:</span>
-            <span className="text-monad-300">Monad Testnet ({DUELIO_SESSION_POLICY.chainId})</span>
+      {/* Clean Profile Header Card */}
+      <div className="rounded-3xl overflow-hidden bg-surface shadow-card border border-border">
+        {/* Header Area with Metrics */}
+        <div className="relative h-44 sm:h-52 w-full bg-gradient-to-br from-monad-700 to-monad-500 px-4 sm:px-6 pt-4 pb-5 flex flex-col justify-between">
+          {/* Top Bar */}
+          <div className="relative z-10 flex items-center justify-between text-white">
+            <button
+              onClick={onBack}
+              className="p-2 -ml-2 rounded-xl bg-white/10 hover:bg-white/20 text-white active:scale-95 transition-[background-color,color,transform] duration-100"
+              aria-label="Back to Home"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5">
+              <div className="px-3 py-1 rounded-full bg-white/10 text-xs font-medium text-white/90 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-positive animate-pulse"></span>
+                <span>Monad</span>
+              </div>
+
+              <div className="relative p-2 rounded-xl bg-white/10 hover:bg-white/20 cursor-pointer active:scale-95 transition-[background-color,color,transform] duration-100">
+                <Bell className="w-4 h-4 text-white" />
+                <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent"></div>
+              </div>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Max Spend Allowance:</span>
-            <span>{DUELIO_SESSION_POLICY.maxSpendMon} MON</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Allowed Selectors:</span>
-            <span>joinDuel, commitOutcome, placePrediction</span>
+
+          {/* Bottom: Stats & Avatar */}
+          <div className="relative z-10 flex items-end justify-between">
+            <div className="flex items-center gap-4 sm:gap-5 text-white">
+              <div>
+                <span className="font-mono font-bold text-xl leading-tight block">
+                  {activeProfile.elo.toLocaleString("en-US")}
+                </span>
+                <span className="text-xs text-white/80 font-medium">
+                  Master ELO
+                </span>
+              </div>
+              <div>
+                <span className="font-mono font-bold text-xl leading-tight block text-positive">
+                  {((activeProfile.wins / activeProfile.duels) * 100).toFixed(1)}%
+                </span>
+                <span className="text-xs text-white/80 font-medium">
+                  Win Rate
+                </span>
+              </div>
+              <div className="hidden sm:block">
+                <span className="font-mono font-bold text-xl leading-tight block">
+                  #{activeProfile.rank}
+                </span>
+                <span className="text-xs text-white/80 font-medium">
+                  Rank
+                </span>
+              </div>
+            </div>
+
+            {/* Avatar */}
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl p-1 bg-surface shadow-elevated -mb-10 sm:-mb-12 shrink-0">
+              <img
+                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face"
+                width={80}
+                height={80}
+                alt={activeProfile.name}
+                className="w-full h-full rounded-xl object-cover"
+              />
+            </div>
           </div>
         </div>
 
-        {/* Emergency Revoke Button */}
-        {sessionActive ? (
-          <button
-            onClick={handleRevokeSession}
-            className="w-full py-2 rounded-xl bg-duel-red/20 hover:bg-duel-red/30 border border-duel-red/40 text-duel-red text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>EMERGENCY REVOKE SESSION KEY</span>
-          </button>
-        ) : (
-          <div className="p-2 rounded-xl bg-slate-800 text-center text-xs text-slate-400 font-semibold">
-            Session signer revoked. Future moves require manual wallet confirmation.
+        {/* User Identity */}
+        <div className="px-4 sm:px-8 pt-10 sm:pt-12 pb-6 space-y-3 border-b border-border">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-text-primary">
+                {activeProfile.name}
+              </h2>
+              <div className="w-5 h-5 rounded-full bg-monad-600 text-white flex items-center justify-center">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              </div>
+              <Share2 className="w-4 h-4 text-text-tertiary hover:text-text-primary cursor-pointer ml-1 active:scale-90 transition-[background-color,color,transform] duration-100" />
+            </div>
+
+            {profile ? (
+              <button
+                onClick={handleFollow}
+                disabled={!followAllowed}
+                aria-pressed={isFollowing}
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 ${
+                  isFollowing
+                    ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                    : "bg-monad-600 hover:bg-monad-700 text-white shadow-xs"
+                }`}
+              >
+                {normalizeAddress(viewerAddress) === normalizeAddress(profile.address) ? "Your profile" : !viewerAddress ? "Connect to follow" : isFollowing ? "Following · local" : "Follow"}
+              </button>
+            ) : viewerAddress ? (
+              <button
+                onClick={onArena}
+                className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
+              >
+                <Swords className="w-3.5 h-3.5" />
+                <span>Enter Arena</span>
+              </button>
+            ) : (
+              <button
+                onClick={onConnect}
+                className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-white" />
+                <span>Connect Wallet</span>
+              </button>
+            )}
           </div>
-        )}
+
+          <div className="break-words text-sm font-mono font-semibold text-monad-700">
+            {activeProfile.address.slice(0, 6)}…{activeProfile.address.slice(-4)}
+          </div>
+
+          <p className="text-sm text-text-secondary font-medium leading-relaxed max-w-2xl">
+            High-frequency PvP trader in the practice arena. Specializing in sub-minute tactical allocation clashes.
+          </p>
+
+          {/* Metadata */}
+          <div className="flex items-center gap-4 sm:gap-6 pt-1 text-xs text-text-secondary font-medium flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <Swords className="w-3.5 h-3.5 text-monad-500" />
+              <span>{activeProfile.duels} Duels · {activeProfile.wins} Wins</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Flame className="w-3.5 h-3.5 text-amber-500" />
+              <span>5x Streak</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5" />
+              <span>Avg: 60s</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Since Sep 2026</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Two Column Layout */}
+        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
+          {/* Left: Balance & Chart */}
+          <div className="min-w-0 p-4 sm:p-8 space-y-5">
+            <div className="flex flex-col items-start gap-4">
+              <div>
+                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide block">
+                  Total Equity
+                </span>
+                <div className="flex items-baseline text-text-primary font-bold tracking-tight mt-1">
+                  <span className="text-4xl sm:text-5xl font-mono">
+                    358.50
+                  </span>
+                  <span className="text-xl font-semibold text-monad-600 ml-2">
+                    MON
+                  </span>
+                </div>
+                <div className="text-sm font-mono font-semibold text-positive mt-1 flex items-center gap-1">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>+48.20 MON (+15.6%)</span>
+                </div>
+              </div>
+
+              {/* Timeframe Selector */}
+              <div className="flex items-center bg-surface-secondary p-1 rounded-xl text-xs font-semibold">
+                {(["24h", "7d", "30d"] as const).map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    aria-pressed={timeframe === tf}
+                    className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] duration-150 active:scale-95 ${
+                      timeframe === tf
+                        ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                        : "text-text-secondary hover:text-text-primary"
+                    }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Clean Chart */}
+            <div className="w-full h-32 my-2 relative">
+              <svg
+                className="w-full h-full overflow-visible"
+                viewBox="0 0 320 80"
+                preserveAspectRatio="none"
+                role="img"
+                aria-label="Equity trend rising over the selected period"
+              >
+                <path
+                  d="M 0 65 Q 40 55, 80 50 T 160 38 T 240 28 T 320 18"
+                  fill="none"
+                  stroke="#14CF1C"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                />
+                <circle
+                  cx="320"
+                  cy="18"
+                  r="4"
+                  fill="#14CF1C"
+                />
+              </svg>
+            </div>
+
+            {/* Breakdown */}
+            <div className="space-y-2 pt-2 border-t border-border">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-text-secondary">
+                  Active Escrow
+                </span>
+                <span className="font-mono font-semibold text-text-primary">
+                  128.50 MON
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-text-secondary">
+                  Wallet Balance
+                </span>
+                <span className="font-mono font-semibold text-text-primary">
+                  230.00 MON
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Positions & Session */}
+          <div className="min-w-0 p-4 sm:p-8 space-y-6">
+            {/* Positions */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase text-text-secondary tracking-wide">
+                  Positions
+                </h4>
+                <span className="text-xs font-mono text-text-tertiary">
+                  4 Assets
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {/* Monad */}
+                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
+                  <div className="flex items-center gap-3">
+                    <AssetLogo symbol="MON" size={36} />
+                    <div>
+                      <div className="text-sm font-bold text-text-primary">
+                        Monad Native
+                      </div>
+                      <div className="text-xs text-text-secondary font-mono">
+                        120.0 MON • 2x Long
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-semibold text-text-primary">
+                      $2,286.00
+                    </div>
+                    <div className="text-xs font-mono font-semibold text-positive">
+                      +9.34%
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bitcoin */}
+                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
+                  <div className="flex items-center gap-3">
+                    <AssetLogo symbol="BTC" size={36} />
+                    <div>
+                      <div className="text-sm font-bold text-text-primary">
+                        Bitcoin
+                      </div>
+                      <div className="text-xs text-text-secondary font-mono">
+                        0.05 BTC • 1x Spot
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-semibold text-text-primary">
+                      $4,840.00
+                    </div>
+                    <div className="text-xs font-mono font-semibold text-positive">
+                      +2.76%
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ethereum */}
+                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
+                  <div className="flex items-center gap-3">
+                    <AssetLogo symbol="ETH" size={36} />
+                    <div>
+                      <div className="text-sm font-bold text-text-primary">
+                        Ethereum
+                      </div>
+                      <div className="text-xs text-text-secondary font-mono">
+                        0.85 ETH • 1x Spot
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-semibold text-text-primary">
+                      $2,303.50
+                    </div>
+                    <div className="text-xs font-mono font-semibold text-positive">
+                      +2.65%
+                    </div>
+                  </div>
+                </div>
+
+                {/* Solana */}
+                <div className="flex items-center justify-between py-2.5">
+                  <div className="flex items-center gap-3">
+                    <AssetLogo symbol="SOL" size={36} />
+                    <div>
+                      <div className="text-sm font-bold text-text-primary">
+                        Solana
+                      </div>
+                      <div className="text-xs text-text-secondary font-mono">
+                        8.50 SOL • 1.5x Long
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-semibold text-text-primary">
+                      $1,547.00
+                    </div>
+                    <div className="text-xs font-mono font-semibold text-positive">
+                      +6.00%
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Session Key Card */}
+            <div className="p-4 rounded-2xl bg-surface border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-monad-600" />
+                  <h4 className="text-xs font-bold text-text-primary uppercase tracking-wide">
+                    Session Key
+                  </h4>
+                </div>
+                <span
+                  className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full ${
+                    sessionActive
+                      ? "bg-green-50 text-green-700"
+                      : "bg-red-50 text-red-700"
+                  }`}
+                >
+                  {sessionActive ? "ACTIVE" : "REVOKED"}
+                </span>
+              </div>
+
+              <div className="space-y-1 text-xs font-mono text-text-secondary bg-surface-secondary p-2.5 rounded-xl">
+                <div className="flex justify-between">
+                  <span>Chain:</span>
+                  <span className="font-semibold text-text-primary">
+                    Monad {DUELIO_SESSION_POLICY.chainId}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Contract:</span>
+                  <span className="font-semibold text-monad-600">DuelArena</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Limit:</span>
+                  <span className="font-semibold text-text-primary">
+                    {DUELIO_SESSION_POLICY.maxSpendMon} MON
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={handleToggleSession}
+                className={`w-full py-2 rounded-xl text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 flex items-center justify-center gap-1.5 ${
+                  sessionActive
+                    ? "bg-red-50 text-red-600 border border-red-200"
+                    : "bg-monad-50 text-monad-700 border border-monad-200"
+                }`}
+              >
+                {sessionActive ? (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Preview revoke</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Preview authorize</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
