@@ -1,0 +1,56 @@
+type Trader @entity {
+  id: ID! # Wallet address
+  address: String!
+  totalDuels: Int!
+  wins: Int!
+  losses: Int!
+  winRate: Float! # Calculated wins / totalDuels
+  winStreak: Int!
+  bestStreak: Int!
+  elo: Int! # Starting at 1200
+  totalMonWon: BigInt!
+  duelsAsPlayerA: [Duel!]! @derivedFrom(field: "playerA")
+  duelsAsPlayerB: [Duel!]! @derivedFrom(field: "playerB")
+  predictions: [Prediction!]! @derivedFrom(field: "predictor")
+}
+
+type Duel @entity {
+  id: ID! # duelId
+  duelId: BigInt!
+  creator: String!
+  playerA: Trader!
+  playerB: Trader
+  entryStake: BigInt!
+  duration: BigInt!
+  startTime: BigInt
+  endTime: BigInt
+  state: String! # CREATED, JOINED, ACTIVE, COMMITTED, SETTLED, CANCELLED
+  winner: Trader
+  finalStateHash: String
+  traderPayout: BigInt
+  totalPredictionPoolA: BigInt!
+  totalPredictionPoolB: BigInt!
+  predictions: [Prediction!]! @derivedFrom(field: "duel")
+  createdBlockNumber: Int!
+  createdTimestamp: BigInt!
+}
+
+type Prediction @entity {
+  id: ID! # duelId-predictor
+  duel: Duel!
+  predictor: Trader!
+  predictedWinner: String!
+  amount: BigInt!
+  claimed: Boolean!
+  payout: BigInt
+  timestamp: BigInt!
+}
+
+type GlobalStats @entity {
+  id: ID! # "global"
+  totalDuelsCreated: Int!
+  totalDuelsSettled: Int!
+  totalVolumeMon: BigInt!
+  totalPredictionsPlaced: Int!
+  totalPredictionsVolumeMon: BigInt!
+}
