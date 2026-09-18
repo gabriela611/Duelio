@@ -45,6 +45,7 @@ Thumbs.db
 .codex/
 .claude/
 .opencode/
+.codegraph/
 
 # Local ODD planning artifacts
 odd/
