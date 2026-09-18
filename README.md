@@ -1,10 +1,28 @@
 # Duelio
 
+[![Monad Testnet](https://img.shields.io/badge/Monad%20Testnet-Chain%2010143-836EF9?style=for-the-badge&logo=ethereum&logoColor=white)](https://testnet.monadscan.com)
+[![Solidity](https://img.shields.io/badge/Solidity-^0.8.24-363636?style=for-the-badge&logo=solidity&logoColor=white)](https://docs.soliditylang.org/)
+[![Envio](https://img.shields.io/badge/Envio-HyperIndex-FF5722?style=for-the-badge)](https://envio.dev)
+[![Privy](https://img.shields.io/badge/Privy-Embedded%20Wallets-6366F1?style=for-the-badge)](https://privy.io)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+
 **Duelio is a mobile-first PvP arena for crypto trading strategies on Monad.** Two traders compete in a short, rules-bound duel while spectators follow the match, make a testnet prediction, and build a public reputation around their calls.
 
 The product turns a private trading decision into a social, observable event: a live arena, a spectator layer, and an onchain record that can be checked after the match.
 
 > **Demo status:** Duelio is a hackathon prototype on Monad Testnet. It uses testnet MON only. The current UI includes a simulated game loop; the contract and indexer define the settlement and data contracts that the production loop will call.
+
+## Quick Judge Summary
+
+| Feature | Implementation | Stack / Reference |
+| --- | --- | --- |
+| **Blockchain** | Monad Testnet (Chain ID `10143`) | EVM 10,000 TPS, 1s block time, sub-cent gas |
+| **Smart Contracts** | `DuelArena.sol` | Solidity `^0.8.24`, escrow, predictions, deterministic payouts |
+| **Indexer** | Envio HyperIndex | Real-time event indexing, trader ELO rankings, GraphQL API |
+| **Authentication** | Privy Embedded Wallets | Web2 social login (X, Google, Farcaster) + scoped session policies |
+| **Frontend** | Next.js 15 (App Router) | Mobile-first PvP arena, tactical asset cards, spectator view |
 
 ## Why Duelio
 
@@ -90,6 +108,22 @@ npm run dev
 Open <http://localhost:3000>.
 
 The default public configuration targets Monad Testnet, chain ID `10143`. Replace the zero address and placeholder Privy app ID with your deployment values in `.env.local`. Never commit `.env.local`, private keys, app secrets, or deployed credentials.
+
+### Automated Checks & Testing
+
+```bash
+# Run unit tests (Envio handlers & ELO algorithm)
+npm test
+
+# Verify TypeScript types
+npm run typecheck
+
+# Run linter
+npm run lint
+
+# Build production bundle
+npm run build
+```
 
 ### Monad Testnet
 

@@ -1,4 +1,6 @@
-import { calculateElo, handlers } from "../src/EventHandlers";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { calculateElo, handlers } from "../src/EventHandlers.ts";
 
 /**
  * Verification test for Envio HyperIndex logic
@@ -10,8 +12,8 @@ describe("Envio HyperIndex Event Handlers", () => {
 
     const { newWinnerElo, newLoserElo } = calculateElo(winnerElo, loserElo, 32);
 
-    expect(newWinnerElo).toBe(1216);
-    expect(newLoserElo).toBe(1184);
+    assert.strictEqual(newWinnerElo, 1216);
+    assert.strictEqual(newLoserElo, 1184);
   });
 
   it("should track duel state transition from CREATED to JOINED to SETTLED", () => {
@@ -29,7 +31,7 @@ describe("Envio HyperIndex Event Handlers", () => {
       state
     );
 
-    expect(state.duels["1"].state).toBe("CREATED");
+    assert.strictEqual(state.duels["1"].state, "CREATED");
 
     handlers.handleDuelJoined(
       {
@@ -39,8 +41,8 @@ describe("Envio HyperIndex Event Handlers", () => {
       state
     );
 
-    expect(state.duels["1"].state).toBe("JOINED");
-    expect(state.duels["1"].playerB_id).toBe("0xbbb");
+    assert.strictEqual(state.duels["1"].state, "JOINED");
+    assert.strictEqual(state.duels["1"].playerB_id, "0xbbb");
 
     handlers.handleDuelSettled(
       {
@@ -50,10 +52,10 @@ describe("Envio HyperIndex Event Handlers", () => {
       state
     );
 
-    expect(state.duels["1"].state).toBe("SETTLED");
-    expect(state.traders["0xaaa"].wins).toBe(1);
-    expect(state.traders["0xbbb"].losses).toBe(1);
-    expect(state.traders["0xaaa"].elo).toBeGreaterThan(1200);
-    expect(state.traders["0xbbb"].elo).toBeLessThan(1200);
+    assert.strictEqual(state.duels["1"].state, "SETTLED");
+    assert.strictEqual(state.traders["0xaaa"].wins, 1);
+    assert.strictEqual(state.traders["0xbbb"].losses, 1);
+    assert.ok(state.traders["0xaaa"].elo > 1200);
+    assert.ok(state.traders["0xbbb"].elo < 1200);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Timer, Zap, Flame, ShieldAlert, Award, Swords, RefreshCw } from "lucide-react";
 import confetti from "canvas-confetti";
 import { Duel, AssetAllocation } from "@/domain/duel/Duel";
@@ -23,27 +23,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
   // Deck of assets player can tactically adjust
   const [selectedAsset, setSelectedAsset] = useState<"MON" | "BTC" | "ETH" | "SOL">("MON");
 
-  // Game loop countdown
-  useEffect(() => {
-    if (timeLeft <= 0 || roundResult) return;
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          handleTriggerSettlement();
-          return 0;
-        }
-        // Micro-price fluctuations simulated
-        setPnlA((p) => Number((p + (Math.random() * 0.4 - 0.18)).toFixed(2)));
-        setPnlB((p) => Number((p + (Math.random() * 0.4 - 0.22)).toFixed(2)));
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [timeLeft, roundResult]);
-
-  const handleTriggerSettlement = () => {
+  const handleTriggerSettlement = useCallback(() => {
     setIsSettling(true);
     setTimeout(() => {
       const allocA: AssetAllocation[] = [
@@ -71,7 +51,27 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
 
       onSettleSuccess?.(result);
     }, 800); // Prototype transition delay; chain confirmation is asynchronous.
-  };
+  }, [duel, onSettleSuccess]);
+
+  // Game loop countdown
+  useEffect(() => {
+    if (timeLeft <= 0 || roundResult) return;
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleTriggerSettlement();
+          return 0;
+        }
+        // Micro-price fluctuations simulated
+        setPnlA((p) => Number((p + (Math.random() * 0.4 - 0.18)).toFixed(2)));
+        setPnlB((p) => Number((p + (Math.random() * 0.4 - 0.22)).toFixed(2)));
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [timeLeft, roundResult, handleTriggerSettlement]);
 
   const isPlayerWinning = pnlA >= pnlB;
 
