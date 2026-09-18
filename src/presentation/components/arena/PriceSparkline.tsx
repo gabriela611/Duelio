@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { TrendingUp, TrendingDown, Radio } from "lucide-react";
 import { SupportedAsset, usePriceStream } from "@/infrastructure/price-feed/usePriceStream";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
 interface PriceSparklineProps {
   asset: SupportedAsset;
@@ -66,6 +67,7 @@ export const PriceSparkline: React.FC<PriceSparklineProps> = ({ asset }) => {
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
+            <AssetLogo symbol={asset} size={18} />
             <span className="text-xs font-bold text-text-primary">
               {asset}/USD
             </span>

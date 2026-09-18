@@ -20,6 +20,7 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { DUELIO_SESSION_POLICY } from "@/infrastructure/web3/privyConfig";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
 interface ProfileBadgeProps {
   onBack?: () => void;
@@ -263,23 +264,21 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
 
               <div className="space-y-2">
                 {/* Monad */}
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-monad-600 flex items-center justify-center text-white font-bold text-xs">
-                      M
-                    </div>
+                    <AssetLogo symbol="MON" size={36} />
                     <div>
                       <div className="text-sm font-bold text-text-primary">
-                        Monad
+                        Monad Native
                       </div>
                       <div className="text-xs text-text-secondary font-mono">
-                        120.0 MON
+                        120.0 MON • 2x Long
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-mono font-semibold text-text-primary">
-                      $2,286
+                      $2,286.00
                     </div>
                     <div className="text-xs font-mono font-semibold text-positive">
                       +9.34%
@@ -288,23 +287,21 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 </div>
 
                 {/* Bitcoin */}
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-white font-bold text-xs">
-                      ₿
-                    </div>
+                    <AssetLogo symbol="BTC" size={36} />
                     <div>
                       <div className="text-sm font-bold text-text-primary">
                         Bitcoin
                       </div>
                       <div className="text-xs text-text-secondary font-mono">
-                        0.05 BTC
+                        0.05 BTC • 1x Spot
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-mono font-semibold text-text-primary">
-                      $4,840
+                      $4,840.00
                     </div>
                     <div className="text-xs font-mono font-semibold text-positive">
                       +2.76%
@@ -313,23 +310,21 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 </div>
 
                 {/* Ethereum */}
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center text-white font-bold text-xs">
-                      Ξ
-                    </div>
+                    <AssetLogo symbol="ETH" size={36} />
                     <div>
                       <div className="text-sm font-bold text-text-primary">
                         Ethereum
                       </div>
                       <div className="text-xs text-text-secondary font-mono">
-                        0.85 ETH
+                        0.85 ETH • 1x Spot
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-mono font-semibold text-text-primary">
-                      $2,303
+                      $2,303.50
                     </div>
                     <div className="text-xs font-mono font-semibold text-positive">
                       +2.65%
@@ -338,23 +333,21 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 </div>
 
                 {/* Solana */}
-                <div className="flex items-center justify-between py-2">
+                <div className="flex items-center justify-between py-2.5">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 to-teal-400 flex items-center justify-center text-white font-bold text-xs">
-                      S
-                    </div>
+                    <AssetLogo symbol="SOL" size={36} />
                     <div>
                       <div className="text-sm font-bold text-text-primary">
                         Solana
                       </div>
                       <div className="text-xs text-text-secondary font-mono">
-                        8.50 SOL
+                        8.50 SOL • 1.5x Long
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-mono font-semibold text-text-primary">
-                      $1,547
+                      $1,547.00
                     </div>
                     <div className="text-xs font-mono font-semibold text-positive">
                       +6.00%

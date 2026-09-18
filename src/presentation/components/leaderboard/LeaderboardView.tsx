@@ -17,6 +17,7 @@ import {
   fetchIndexerStatus,
   EnvioSyncStatus,
 } from "@/infrastructure/envio/client";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
 interface LeaderboardViewProps {
   onBack?: () => void;
@@ -196,8 +197,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
         </div>
 
         <div className="text-right">
-          <span className="text-base font-mono font-bold text-positive block">
-            +452.80 MON
+          <span className="text-base font-mono font-bold text-positive flex items-center justify-end gap-1">
+            <AssetLogo symbol="MON" size={16} />
+            <span>+452.80 MON</span>
           </span>
           <span className="text-xs text-text-secondary font-medium block mt-0.5">
             82.9% • 5x
@@ -310,14 +312,21 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
                   <span>{t.handle}</span>
                   <span>•</span>
                   <span className="text-monad-600 font-semibold">{t.elo} ELO</span>
+                  <span>•</span>
+                  <div className="inline-flex items-center gap-1">
+                    {t.badges.map((badge) => (
+                      <AssetLogo key={badge} symbol={badge} size={14} />
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Right: PnL */}
             <div className="flex items-center justify-between gap-2 pl-[7rem] sm:block sm:pl-0 sm:text-right shrink-0">
-              <div className="text-sm font-mono font-bold text-positive">
-                {t.pnlMon} MON
+              <div className="text-sm font-mono font-bold text-positive flex items-center gap-1 sm:justify-end">
+                <AssetLogo symbol="MON" size={14} />
+                <span>{t.pnlMon} MON</span>
               </div>
               <div className="text-xs font-medium text-text-tertiary mt-0.5">
                 {t.winRate}

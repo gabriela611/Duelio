@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { AlertCircle, CheckCircle2, Sparkles, Activity } from "lucide-react";
 import { calculateOdds } from "@/domain/prediction/Prediction";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
 export const SpectatorWidget: React.FC = () => {
   const [poolA, setPoolA] = useState("12.50");
@@ -47,7 +48,7 @@ export const SpectatorWidget: React.FC = () => {
         {/* Matchup */}
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs sm:text-sm">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="w-2.5 h-2.5 shrink-0 rounded-full bg-monad-600 animate-pulse"></span>
+            <AssetLogo symbol="MON" size={20} />
             <span className="break-words min-w-0 font-bold text-text-primary">
               MonadWhale (A)
             </span>
@@ -55,11 +56,13 @@ export const SpectatorWidget: React.FC = () => {
           <span className="text-text-tertiary font-bold text-xs uppercase tracking-wider bg-surface-secondary px-2.5 py-0.5 rounded-full">
             VS
           </span>
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center justify-end gap-2 text-right">
             <span className="break-words min-w-0 font-bold text-text-primary">
               CryptoKnight (B)
             </span>
-            <span className="w-2.5 h-2.5 shrink-0 rounded-full bg-slate-800"></span>
+            <div className="w-5 h-5 rounded-md bg-slate-900 flex items-center justify-center text-white shrink-0">
+              <span className="text-[10px] font-bold">K</span>
+            </div>
           </div>
         </div>
 
@@ -81,10 +84,12 @@ export const SpectatorWidget: React.FC = () => {
           </div>
 
           <div className="flex flex-col gap-1 sm:flex-row sm:justify-between text-xs font-mono font-semibold text-text-secondary px-1">
-            <span>
+            <span className="flex items-center gap-1">
+              <AssetLogo symbol="MON" size={13} />
               Pool A: {poolA} MON ({odds.multiplierA}x)
             </span>
-            <span>
+            <span className="flex items-center gap-1 sm:justify-end">
+              <AssetLogo symbol="MON" size={13} />
               Pool B: {poolB} MON ({odds.multiplierB}x)
             </span>
           </div>
@@ -124,8 +129,9 @@ export const SpectatorWidget: React.FC = () => {
 
         {/* Stake Amounts */}
         <div className="space-y-2">
-          <p id="stake-amount-label" className="text-xs font-bold uppercase text-text-secondary tracking-wider">
-            Stake Amount (MON)
+          <p id="stake-amount-label" className="text-xs font-bold uppercase text-text-secondary tracking-wider flex items-center gap-1.5">
+            <AssetLogo symbol="MON" size={14} />
+            <span>Stake Amount (MON)</span>
           </p>
           <div role="group" aria-labelledby="stake-amount-label" className="grid grid-cols-3 gap-2.5">
             {["0.25", "0.50", "1.00"].map((amt) => (

@@ -21,6 +21,7 @@ import { Duel, AssetAllocation } from "@/domain/duel/Duel";
 import { DuelService } from "@/application/DuelService";
 import { DuelRoundResult } from "@/infrastructure/game-engine/Engine";
 import { PriceSparkline } from "./PriceSparkline";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
 interface ArenaViewProps {
   userAddress?: string;
@@ -97,8 +98,9 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
       {/* Clean User Session Banner */}
       <div className="rounded-3xl bg-surface p-5 sm:p-6 border border-border shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3.5">
-          <div className="w-12 h-12 shrink-0 rounded-xl bg-monad-600 flex items-center justify-center text-white font-bold text-lg">
-            MW
+          <div className="w-12 h-12 shrink-0 rounded-2xl bg-monad-600/10 border border-monad-500/20 flex items-center justify-center relative p-2 shadow-2xs">
+            <AssetLogo symbol="MON" size={32} />
+            <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-positive border-2 border-surface" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -154,9 +156,12 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
             </div>
 
             <div>
-              <div className="flex items-baseline text-text-primary font-bold tracking-tight">
+              <div className="flex items-center text-text-primary font-bold tracking-tight">
                 <span className="text-4xl sm:text-5xl font-mono">128.50</span>
-                <span className="text-xl font-semibold text-monad-600 ml-2">MON</span>
+                <span className="flex items-center gap-1.5 text-xl font-semibold text-monad-600 ml-2.5">
+                  <AssetLogo symbol="MON" size={22} />
+                  <span>MON</span>
+                </span>
               </div>
               <p className="text-xs text-text-secondary mt-1">
                 ≈ $2,450 USD • Ready for matchmaking
@@ -227,57 +232,101 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
             </div>
           </div>
 
-          {/* Opponent */}
-          <div className="p-3.5 rounded-2xl bg-surface-secondary space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center">
-                  B
+          {/* Dual-Sided Clash Momentum Gauge */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-surface-secondary border border-border space-y-4">
+            {/* Duelists Head-to-Head */}
+            <div className="grid grid-cols-12 items-center gap-2">
+              {/* Player 1 (You) */}
+              <div className="col-span-5 flex items-center gap-2.5 min-w-0">
+                <div className="relative shrink-0">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-monad-600 to-monad-700 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                    <AssetLogo symbol="MON" size={24} />
+                  </div>
+                  <span className="absolute -bottom-1 -right-1 px-1 py-0.2 rounded bg-monad-700 text-[9px] font-bold text-white tracking-wider">
+                    YOU
+                  </span>
                 </div>
-                <div>
-                  <div className="text-sm font-bold text-text-primary">CryptoKnight</div>
-                  <div className="text-xs text-text-secondary font-medium">1620 ELO</div>
-                </div>
-              </div>
-              <span className={`text-sm font-bold font-mono ${pnlB >= 0 ? "text-positive" : "text-negative"}`}>
-                {pnlB >= 0 ? `+${pnlB}%` : `${pnlB}%`}
-              </span>
-            </div>
-
-            {/* Health */}
-            <div className="w-full h-2 bg-white rounded-full overflow-hidden">
-              <div
-                className={`h-full origin-left transition-transform duration-300 ${
-                  pnlB >= pnlA ? "bg-negative" : "bg-slate-400"
-                }`}
-                style={{ transform: `scaleX(${Math.min(100, Math.max(10, 50 + pnlB * 8)) / 100})` }}
-              ></div>
-            </div>
-          </div>
-
-          {/* You */}
-          <div className="p-3.5 rounded-2xl bg-purple-50 border border-purple-200 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-monad-600 text-white font-bold text-xs flex items-center justify-center">
-                  YOU
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-text-primary">MonadWhale</div>
-                  <div className="text-xs text-monad-700 font-medium">1845 ELO</div>
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm font-bold text-text-primary truncate">
+                    MonadWhale
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-text-tertiary">1845 ELO</span>
+                    <span className={`text-xs font-bold font-mono ${pnlA >= 0 ? "text-positive" : "text-negative"}`}>
+                      {pnlA >= 0 ? `+${pnlA}%` : `${pnlA}%`}
+                    </span>
+                  </div>
                 </div>
               </div>
-              <span className={`text-sm font-bold font-mono ${pnlA >= 0 ? "text-positive" : "text-negative"}`}>
-                {pnlA >= 0 ? `+${pnlA}%` : `${pnlA}%`}
-              </span>
+
+              {/* Center VS & Advantage Badge */}
+              <div className="col-span-2 flex flex-col items-center justify-center text-center">
+                <div className="w-7 h-7 rounded-full bg-surface border border-border flex items-center justify-center shadow-xs">
+                  <Swords className="w-3.5 h-3.5 text-text-secondary" />
+                </div>
+                <span className={`text-[10px] font-bold font-mono mt-1 ${
+                  pnlA > pnlB ? "text-positive" : pnlA < pnlB ? "text-negative" : "text-text-tertiary"
+                }`}>
+                  {pnlA > pnlB ? `+${(pnlA - pnlB).toFixed(1)}%` : pnlA < pnlB ? `${(pnlA - pnlB).toFixed(1)}%` : "EVEN"}
+                </span>
+              </div>
+
+              {/* Player 2 (Opponent) */}
+              <div className="col-span-5 flex items-center justify-end gap-2.5 min-w-0 text-right">
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm font-bold text-text-primary truncate">
+                    CryptoKnight
+                  </div>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <span className={`text-xs font-bold font-mono ${pnlB >= 0 ? "text-positive" : "text-negative"}`}>
+                      {pnlB >= 0 ? `+${pnlB}%` : `${pnlB}%`}
+                    </span>
+                    <span className="text-[11px] font-medium text-text-tertiary">1620 ELO</span>
+                  </div>
+                </div>
+                <div className="relative shrink-0">
+                  <div className="w-10 h-10 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                    <Shield className="w-5 h-5 text-slate-300" />
+                  </div>
+                  <span className="absolute -bottom-1 -left-1 px-1 py-0.2 rounded bg-slate-800 text-[9px] font-bold text-slate-300 tracking-wider">
+                    OPP
+                  </span>
+                </div>
+              </div>
             </div>
 
-            {/* Health */}
-            <div className="w-full h-2 bg-purple-200 rounded-full overflow-hidden">
-              <div
-                className="h-full origin-left bg-monad-600 transition-transform duration-300"
-                style={{ transform: `scaleX(${Math.min(100, Math.max(10, 50 + pnlA * 8)) / 100})` }}
-              ></div>
+            {/* Continuous Momentum Gauge */}
+            <div className="space-y-1.5 pt-1">
+              <div className="relative w-full h-3 bg-slate-200 rounded-full overflow-hidden flex">
+                {/* Center marker line */}
+                <div className="absolute top-0 bottom-0 left-1/2 w-0.5 bg-white/80 z-10 -translate-x-1/2" />
+                
+                {/* MonadWhale Momentum (Left side) */}
+                <div
+                  className="h-full bg-gradient-to-r from-monad-500 to-monad-600 transition-all duration-500 rounded-l-full"
+                  style={{
+                    width: `${Math.min(85, Math.max(15, 50 + (pnlA - pnlB) * 4))}%`,
+                  }}
+                />
+                
+                {/* CryptoKnight Momentum (Right side) */}
+                <div
+                  className="h-full bg-slate-400 transition-all duration-500 flex-1 rounded-r-full"
+                />
+              </div>
+
+              {/* Advantage Subtext */}
+              <div className="flex items-center justify-between text-[11px] font-semibold text-text-tertiary px-0.5">
+                <span className={pnlA >= pnlB ? "text-monad-600 font-bold" : ""}>
+                  {pnlA >= pnlB ? "▲ Leading Momentum" : "Tactical Deficit"}
+                </span>
+                <span className="font-mono text-[10px] uppercase">
+                  {Math.min(85, Math.max(15, 50 + (pnlA - pnlB) * 4)).toFixed(0)}% / {(100 - Math.min(85, Math.max(15, 50 + (pnlA - pnlB) * 4))).toFixed(0)}% DOMINANCE
+                </span>
+                <span className={pnlB > pnlA ? "text-negative font-bold" : ""}>
+                  {pnlB > pnlA ? "▲ Opponent Surge" : "Challenging"}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -287,26 +336,33 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
           {/* Asset Deck */}
           <div className="space-y-2 pt-1">
             <div className="flex items-center justify-between text-xs font-bold uppercase text-text-tertiary px-1">
-              <span>ALLOCATION</span>
-              <span className="text-monad-600">SELECT</span>
+              <span>TACTICAL ALLOCATION DECK</span>
+              <span className="text-monad-600">LEVERAGE TARGET</span>
             </div>
 
-            <div className="grid grid-cols-4 gap-2.5">
+            <div className="grid grid-cols-4 gap-2 sm:gap-2.5">
               {(["MON", "BTC", "ETH", "SOL"] as const).map((asset) => (
                 <button
                   key={asset}
                   onClick={() => setSelectedAsset(asset)}
                   aria-pressed={selectedAsset === asset}
-                  className={`min-w-0 p-2 sm:p-3 rounded-xl flex flex-col items-center gap-0.5 transition-[background-color,color,transform] duration-100 active:scale-95 ${
+                  className={`min-w-0 p-2.5 sm:p-3 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all duration-150 active:scale-95 border ${
                     selectedAsset === asset
-                      ? "bg-slate-200/90 text-text-primary border-2 border-slate-400 font-bold shadow-xs"
-                      : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
+                      ? "bg-slate-200/90 text-text-primary border-slate-400 font-bold shadow-xs scale-[1.02]"
+                      : "bg-surface-secondary text-text-primary border-transparent hover:bg-surface-tertiary"
                   }`}
                 >
-                  <span className="font-bold text-xs">{asset}</span>
-                  <span className="text-xs opacity-80 font-mono">
-                    {asset === "MON" ? "2x" : "1x"}
-                  </span>
+                  <AssetLogo symbol={asset} size={28} />
+                  <div className="flex flex-col items-center">
+                    <span className="font-bold text-xs tracking-tight">{asset}</span>
+                    <span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-full mt-0.5 ${
+                      asset === "MON" 
+                        ? "bg-monad-100 text-monad-700" 
+                        : "bg-slate-100 text-slate-600"
+                    }`}>
+                      {asset === "MON" ? "2x Long" : "1x Spot"}
+                    </span>
+                  </div>
                 </button>
               ))}
             </div>
