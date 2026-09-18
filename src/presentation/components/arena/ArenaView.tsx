@@ -20,6 +20,7 @@ import confetti from "canvas-confetti";
 import { Duel, AssetAllocation } from "@/domain/duel/Duel";
 import { DuelService } from "@/application/DuelService";
 import { DuelRoundResult } from "@/infrastructure/game-engine/Engine";
+import { PriceSparkline } from "./PriceSparkline";
 
 interface ArenaViewProps {
   userAddress?: string;
@@ -279,6 +280,9 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
               ></div>
             </div>
           </div>
+
+          {/* Real-time Price Chart */}
+          <PriceSparkline asset={selectedAsset} />
 
           {/* Asset Deck */}
           <div className="space-y-2 pt-1">
