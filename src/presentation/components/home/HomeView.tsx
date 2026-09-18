@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDownLeft, ArrowUpRight, Eye, EyeOff, Heart, MessageCircle, RefreshCw, Swords, Trophy } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Eye, EyeOff, Heart, MessageCircle, RefreshCw, Swords, Trophy, Sparkles } from "lucide-react";
 import { formatNativeBalance } from "@/domain/social/identity";
 import { sampleActivity, type SampleProfile } from "@/domain/social/sampleActivity";
 import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
@@ -184,28 +184,145 @@ export function HomeView({ liked, onReaction, userAddress, authenticated, authRe
               </article>
 
               {index === 0 && filter === "all" && (
-                <article className="rounded-3xl border border-border bg-surface p-4 sm:p-5 shadow-card space-y-3">
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-monad-50 text-monad-600 border border-monad-200">
-                      <MessageCircle size={18} />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-text-primary">
-                        Juana <span className="ml-1 text-xs font-normal text-text-tertiary">· sample message</span>
-                      </p>
-                      <p className="mt-1 text-xs sm:text-sm leading-relaxed text-text-secondary">
-                        “Good game, Pepe. Same time tomorrow? 🤝”
-                      </p>
+                <div className="space-y-4">
+                  {/* Social Conversation Message Card */}
+                  <article className="rounded-3xl border border-border bg-surface p-4 sm:p-5 shadow-card space-y-3.5">
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-monad-50 text-monad-600 border border-monad-200 shadow-2xs">
+                        <MessageCircle size={18} />
+                      </span>
+                      <div className="min-w-0 space-y-2.5 flex-1">
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-bold text-text-primary">
+                              Juan <span className="ml-1 text-xs font-normal text-text-tertiary">· duel challenge</span>
+                            </p>
+                            <span className="text-[10px] font-semibold text-text-tertiary">2m ago</span>
+                          </div>
+                          <p className="mt-0.5 text-xs sm:text-sm leading-relaxed text-text-secondary">
+                            “Good game earlier, Pepe! But our rematch is live right now. Let&apos;s see who has the best tactical allocation ⚔️”
+                          </p>
+                        </div>
+
+                        <div className="pt-2.5 border-t border-border/70">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-bold text-text-primary">
+                              Pepe <span className="ml-1 text-xs font-normal text-text-tertiary">· response</span>
+                            </p>
+                            <span className="text-[10px] font-semibold text-text-tertiary">Just now</span>
+                          </div>
+                          <p className="mt-0.5 text-xs sm:text-sm leading-relaxed text-text-secondary">
+                            “Challenge accepted! Staked 10 MON on SOL momentum. Good luck! 🚀”
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <button
-                    onClick={() => onProfile(sampleActivity[1].profile)}
-                    className="h-9 px-3 -ml-1 rounded-full flex items-center gap-1 text-xs font-bold text-monad-600 hover:text-monad-700 hover:bg-monad-50 active:scale-95 transition-all"
-                  >
-                    <span>Meet Juana</span>
-                    <ArrowUpRight size={14} />
-                  </button>
-                </article>
+                  </article>
+
+                  {/* Live Clash Spectate & Bet Card */}
+                  <article className="rounded-3xl border-2 border-monad-500/30 bg-gradient-to-br from-monad-50/80 via-surface to-surface p-5 sm:p-6 shadow-card space-y-4">
+                    {/* Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/10 text-red-600 border border-red-500/20 text-[11px] font-bold tracking-wide uppercase">
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                          <span>Live Clash</span>
+                        </span>
+                        <span className="text-xs font-mono font-semibold text-text-secondary">
+                          Speed Clash (1m) • Duel #104
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 text-xs font-mono font-bold text-monad-700 bg-monad-100/80 px-2.5 py-0.5 rounded-full">
+                        <AssetLogo symbol="MON" size={13} />
+                        <span>24.70 MON Pool</span>
+                      </div>
+                    </div>
+
+                    {/* Head-to-Head Duelists */}
+                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 py-1">
+                      {/* Fighter 1: Juan */}
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                        <div className="relative shrink-0">
+                          <div className="w-11 h-11 rounded-2xl bg-monad-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                            <AssetLogo symbol="MON" size={24} />
+                          </div>
+                          <span className="absolute -bottom-1 -right-1 px-1 py-0.2 rounded bg-monad-700 text-[8px] font-bold text-white tracking-wider">
+                            1.65x
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-text-primary truncate">Juan</div>
+                          <div className="text-xs text-text-tertiary flex items-center gap-1 font-mono">
+                            <span>1890 ELO</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* VS Divider */}
+                      <div className="w-8 h-8 rounded-full bg-surface border border-border flex items-center justify-center shadow-xs shrink-0">
+                        <Swords className="w-4 h-4 text-text-secondary" />
+                      </div>
+
+                      {/* Fighter 2: Pepe */}
+                      <div className="flex items-center justify-end gap-2.5 sm:gap-3 min-w-0 text-right">
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-text-primary truncate">Pepe</div>
+                          <div className="text-xs text-text-tertiary flex items-center justify-end gap-1 font-mono">
+                            <span>1820 ELO</span>
+                          </div>
+                        </div>
+                        <div className="relative shrink-0">
+                          <div className="w-11 h-11 rounded-2xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center shadow-xs">
+                            <AssetLogo symbol="SOL" size={24} />
+                          </div>
+                          <span className="absolute -bottom-1 -left-1 px-1 py-0.2 rounded bg-slate-800 text-[8px] font-bold text-slate-200 tracking-wider">
+                            2.25x
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Live Odds Progress Bar */}
+                    <div className="space-y-1.5 pt-0.5">
+                      <div className="w-full h-3 bg-surface-secondary rounded-full overflow-hidden flex border border-border">
+                        <div
+                          className="h-full bg-monad-600 flex items-center justify-start pl-2 text-[10px] font-bold text-white font-mono"
+                          style={{ width: "58%" }}
+                        >
+                          58%
+                        </div>
+                        <div
+                          className="h-full bg-slate-900 flex items-center justify-end pr-2 text-[10px] font-bold text-white font-mono"
+                          style={{ width: "42%" }}
+                        >
+                          42%
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] font-mono text-text-secondary">
+                        <span className="text-monad-700 font-semibold">Pool Juan: 14.50 MON (1.65x)</span>
+                        <span className="text-slate-700 font-semibold">Pool Pepe: 10.20 MON (2.25x)</span>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons: Spectate and Bet */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <button
+                        onClick={() => onNavigate("spectate")}
+                        className="home-action border border-border bg-surface hover:bg-surface-secondary text-text-primary shadow-xs active:scale-95 transition-all text-xs sm:text-sm font-bold"
+                      >
+                        <Eye size={17} className="text-monad-600" />
+                        <span>Spectate Live Duel</span>
+                      </button>
+                      <button
+                        onClick={() => onNavigate("spectate")}
+                        className="home-action bg-text-primary hover:bg-text-primary/90 text-white shadow-card active:scale-95 transition-all text-xs sm:text-sm font-bold"
+                      >
+                        <Sparkles size={17} className="text-amber-300" />
+                        <span>Stake & Bet on Winner</span>
+                      </button>
+                    </div>
+                  </article>
+                </div>
               )}
             </div>
           ))}

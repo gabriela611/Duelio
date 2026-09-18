@@ -5,12 +5,53 @@ import { AlertCircle, CheckCircle2, Sparkles, Activity } from "lucide-react";
 import { calculateOdds } from "@/domain/prediction/Prediction";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
+interface ActiveDuelMatch {
+  id: string;
+  title: string;
+  category: string;
+  duelistA: { name: string; initials: string; elo: number; symbol: string };
+  duelistB: { name: string; initials: string; elo: number; symbol: string };
+  defaultPoolA: string;
+  defaultPoolB: string;
+}
+
+const ACTIVE_MATCHES: ActiveDuelMatch[] = [
+  {
+    id: "juan-pepe",
+    title: "Juan vs Pepe",
+    category: "60s Speed Rematch",
+    duelistA: { name: "Juan", initials: "JU", elo: 1890, symbol: "MON" },
+    duelistB: { name: "Pepe", initials: "PE", elo: 1820, symbol: "SOL" },
+    defaultPoolA: "14.50",
+    defaultPoolB: "10.20",
+  },
+  {
+    id: "whale-knight",
+    title: "MonadWhale vs CryptoKnight",
+    category: "High Stakes Allocation",
+    duelistA: { name: "MonadWhale", initials: "MW", elo: 1845, symbol: "MON" },
+    duelistB: { name: "CryptoKnight", initials: "CK", elo: 1620, symbol: "ETH" },
+    defaultPoolA: "12.50",
+    defaultPoolB: "8.20",
+  },
+];
+
 export const SpectatorWidget: React.FC = () => {
-  const [poolA, setPoolA] = useState("12.50");
-  const [poolB, setPoolB] = useState("8.20");
+  const [selectedMatchId, setSelectedMatchId] = useState<string>("juan-pepe");
+  const currentMatch = ACTIVE_MATCHES.find((m) => m.id === selectedMatchId) ?? ACTIVE_MATCHES[0];
+
+  const [poolA, setPoolA] = useState(currentMatch.defaultPoolA);
+  const [poolB, setPoolB] = useState(currentMatch.defaultPoolB);
   const [selectedTrader, setSelectedTrader] = useState<"A" | "B">("A");
   const [stakedAmount, setStakedAmount] = useState("0.50");
   const [placed, setPlaced] = useState(false);
+
+  const handleSelectMatch = (match: ActiveDuelMatch) => {
+    setSelectedMatchId(match.id);
+    setPoolA(match.defaultPoolA);
+    setPoolB(match.defaultPoolB);
+    setSelectedTrader("A");
+  };
 
   const odds = calculateOdds(poolA, poolB);
 
@@ -45,24 +86,50 @@ export const SpectatorWidget: React.FC = () => {
       </div>
 
       <div className="rounded-3xl bg-surface border border-border p-4 sm:p-6 shadow-card space-y-5">
+        {/* Match Selector Segmented Control */}
+        <div className="flex items-center gap-2 p-1 rounded-2xl bg-surface-secondary border border-border">
+          {ACTIVE_MATCHES.map((match) => (
+            <button
+              key={match.id}
+              onClick={() => handleSelectMatch(match)}
+              aria-pressed={selectedMatchId === match.id}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all active:scale-95 text-center truncate ${
+                selectedMatchId === match.id
+                  ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
+                  : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              <span>{match.title}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Matchup */}
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-xs sm:text-sm">
-          <div className="flex min-w-0 items-center gap-2">
-            <AssetLogo symbol="MON" size={20} />
-            <span className="break-words min-w-0 font-bold text-text-primary">
-              MonadWhale (A)
-            </span>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <AssetLogo symbol={currentMatch.duelistA.symbol} size={22} />
+            <div className="min-w-0">
+              <span className="break-words min-w-0 font-bold text-text-primary block truncate">
+                {currentMatch.duelistA.name}
+              </span>
+              <span className="text-[11px] text-text-tertiary font-mono">
+                {currentMatch.duelistA.elo} ELO
+              </span>
+            </div>
           </div>
           <span className="text-text-tertiary font-bold text-xs uppercase tracking-wider bg-surface-secondary px-2.5 py-0.5 rounded-full">
             VS
           </span>
-          <div className="flex min-w-0 items-center justify-end gap-2 text-right">
-            <span className="break-words min-w-0 font-bold text-text-primary">
-              CryptoKnight (B)
-            </span>
-            <div className="w-5 h-5 rounded-md bg-slate-900 flex items-center justify-center text-white shrink-0">
-              <span className="text-[10px] font-bold">K</span>
+          <div className="flex min-w-0 items-center justify-end gap-2.5 text-right">
+            <div className="min-w-0">
+              <span className="break-words min-w-0 font-bold text-text-primary block truncate">
+                {currentMatch.duelistB.name}
+              </span>
+              <span className="text-[11px] text-text-tertiary font-mono">
+                {currentMatch.duelistB.elo} ELO
+              </span>
             </div>
+            <AssetLogo symbol={currentMatch.duelistB.symbol} size={22} />
           </div>
         </div>
 
@@ -70,13 +137,13 @@ export const SpectatorWidget: React.FC = () => {
         <div className="space-y-1.5">
           <div className="w-full h-5 bg-surface-secondary rounded-full overflow-hidden flex border border-border">
             <div
-              className="h-full bg-monad-600 flex items-center justify-start pl-3 text-xs font-bold text-white font-mono"
+              className="h-full bg-monad-600 flex items-center justify-start pl-3 text-xs font-bold text-white font-mono transition-all duration-300"
               style={{ width: `${odds.percentA}%` }}
             >
               {odds.percentA}%
             </div>
             <div
-              className="h-full bg-slate-900 flex items-center justify-end pr-3 text-xs font-bold text-white font-mono"
+              className="h-full bg-slate-900 flex items-center justify-end pr-3 text-xs font-bold text-white font-mono transition-all duration-300"
               style={{ width: `${odds.percentB}%` }}
             >
               {odds.percentB}%
@@ -86,11 +153,11 @@ export const SpectatorWidget: React.FC = () => {
           <div className="flex flex-col gap-1 sm:flex-row sm:justify-between text-xs font-mono font-semibold text-text-secondary px-1">
             <span className="flex items-center gap-1">
               <AssetLogo symbol="MON" size={13} />
-              Pool A: {poolA} MON ({odds.multiplierA}x)
+              {currentMatch.duelistA.name}: {poolA} MON ({odds.multiplierA}x)
             </span>
             <span className="flex items-center gap-1 sm:justify-end">
               <AssetLogo symbol="MON" size={13} />
-              Pool B: {poolB} MON ({odds.multiplierB}x)
+              {currentMatch.duelistB.name}: {poolB} MON ({odds.multiplierB}x)
             </span>
           </div>
         </div>
@@ -106,7 +173,7 @@ export const SpectatorWidget: React.FC = () => {
                 : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
             }`}
           >
-            <div className="font-bold">Back MonadWhale</div>
+            <div className="font-bold">Back {currentMatch.duelistA.name}</div>
             <div className="text-xs font-mono text-positive mt-1">
               {odds.multiplierA}x Payout
             </div>
@@ -120,7 +187,7 @@ export const SpectatorWidget: React.FC = () => {
                 : "bg-surface-secondary text-text-primary border-2 border-transparent hover:bg-surface-tertiary"
             }`}
           >
-            <div className="font-bold">Back CryptoKnight</div>
+            <div className="font-bold">Back {currentMatch.duelistB.name}</div>
             <div className="text-xs font-mono text-positive mt-1">
               {odds.multiplierB}x Payout
             </div>
