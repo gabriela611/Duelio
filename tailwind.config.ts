@@ -70,9 +70,9 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          'Inter',
           '-apple-system',
           'BlinkMacSystemFont',
+          'system-ui',
           'SF Pro Display',
           'SF Pro Text',
           'Helvetica Neue',

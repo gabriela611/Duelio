@@ -57,6 +57,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
 
       if (result.winnerAddress === duel.playerA) {
         confetti({
+          disableForReducedMotion: true,
           particleCount: 70,
           spread: 60,
           origin: { y: 0.6 },
@@ -94,12 +95,12 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
 
       {/* Clean User Session Banner */}
       <div className="rounded-3xl bg-surface p-5 sm:p-6 border border-border shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-monad-600 flex items-center justify-center text-white font-bold text-lg">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <div className="w-12 h-12 shrink-0 rounded-xl bg-monad-600 flex items-center justify-center text-white font-bold text-lg">
             MW
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-bold text-text-primary">
                 MonadWhale
               </h2>
@@ -107,14 +108,14 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
                 1845 ELO
               </span>
             </div>
-            <p className="text-xs text-text-secondary font-mono mt-0.5">
+            <p className="break-all text-xs text-text-secondary font-mono mt-0.5">
               {userAddress ? userAddress : "0x836E...0001"}
             </p>
           </div>
         </div>
 
         {/* Session Status & Faucet */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="px-3 py-1 rounded-full bg-green-50 text-green-700 text-xs font-semibold flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-positive animate-pulse"></span>
             <span>Session Active</span>
@@ -124,7 +125,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
               setFaucetSuccess(true);
               setTimeout(() => setFaucetSuccess(false), 2500);
             }}
-            className="px-3.5 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 active:scale-95 transition-all duration-100 text-xs font-semibold text-white flex items-center gap-1 shadow-2xs"
+            className="px-3.5 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 active:scale-95 transition-[background-color,color,transform] duration-100 text-xs font-semibold text-white flex items-center gap-1 shadow-2xs"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>+10 MON</span>
@@ -133,7 +134,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
       </div>
 
       {faucetSuccess && (
-        <div className="rounded-2xl bg-green-50 border border-green-200 p-3 text-xs font-semibold text-green-800 text-center animate-fade-in">
+        <div role="status" className="rounded-2xl bg-green-50 border border-green-200 p-3 text-xs font-semibold text-green-800 text-center animate-fade-in">
           ✓ Received 10 MON from faucet
         </div>
       )}
@@ -142,7 +143,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
         {/* Left: Stats */}
-        <div className="lg:col-span-5 space-y-6">
+        <div className="order-2 min-w-0 lg:order-1 lg:col-span-5 space-y-6">
 
           {/* Balance Card */}
           <div className="rounded-3xl bg-surface p-6 shadow-card border border-border space-y-4">
@@ -153,7 +154,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
 
             <div>
               <div className="flex items-baseline text-text-primary font-bold tracking-tight">
-                <span className="text-5xl font-mono">128.50</span>
+                <span className="text-4xl sm:text-5xl font-mono">128.50</span>
                 <span className="text-xl font-semibold text-monad-600 ml-2">MON</span>
               </div>
               <p className="text-xs text-text-secondary mt-1">
@@ -200,7 +201,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
         </div>
 
         {/* Right: Arena */}
-        <div className="lg:col-span-7 rounded-3xl bg-surface p-6 sm:p-7 shadow-card border border-border space-y-5">
+        <div className="order-1 min-w-0 lg:order-2 lg:col-span-7 rounded-3xl bg-surface p-4 sm:p-7 shadow-card border border-border space-y-5">
 
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -227,8 +228,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
 
           {/* Opponent */}
           <div className="p-3.5 rounded-2xl bg-surface-secondary space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center">
                   B
                 </div>
@@ -245,18 +246,18 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
             {/* Health */}
             <div className="w-full h-2 bg-white rounded-full overflow-hidden">
               <div
-                className={`h-full transition-all duration-300 ${
+                className={`h-full origin-left transition-transform duration-300 ${
                   pnlB >= pnlA ? "bg-negative" : "bg-slate-400"
                 }`}
-                style={{ width: `${Math.min(100, Math.max(10, 50 + pnlB * 8))}%` }}
+                style={{ transform: `scaleX(${Math.min(100, Math.max(10, 50 + pnlB * 8)) / 100})` }}
               ></div>
             </div>
           </div>
 
           {/* You */}
           <div className="p-3.5 rounded-2xl bg-purple-50 border border-purple-200 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-monad-600 text-white font-bold text-xs flex items-center justify-center">
                   YOU
                 </div>
@@ -273,8 +274,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
             {/* Health */}
             <div className="w-full h-2 bg-purple-200 rounded-full overflow-hidden">
               <div
-                className="h-full bg-monad-600 transition-all duration-300"
-                style={{ width: `${Math.min(100, Math.max(10, 50 + pnlA * 8))}%` }}
+                className="h-full origin-left bg-monad-600 transition-transform duration-300"
+                style={{ transform: `scaleX(${Math.min(100, Math.max(10, 50 + pnlA * 8)) / 100})` }}
               ></div>
             </div>
           </div>
@@ -291,7 +292,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
                 <button
                   key={asset}
                   onClick={() => setSelectedAsset(asset)}
-                  className={`p-3 rounded-xl flex flex-col items-center gap-0.5 transition-all duration-100 active:scale-95 ${
+                  aria-pressed={selectedAsset === asset}
+                  className={`min-w-0 p-2 sm:p-3 rounded-xl flex flex-col items-center gap-0.5 transition-[background-color,color,transform] duration-100 active:scale-95 ${
                     selectedAsset === asset
                       ? "bg-text-primary text-white shadow-2xs"
                       : "bg-surface-secondary text-text-primary hover:bg-surface-tertiary"
@@ -308,7 +310,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
 
           {/* Result */}
           {roundResult && (
-            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-center space-y-1.5 animate-fade-in">
+            <div role="status" className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-center space-y-1.5 animate-fade-in">
               <div className="inline-flex p-2 rounded-full bg-amber-200/60 text-amber-900">
                 <Award className="w-5 h-5" />
               </div>
@@ -331,7 +333,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
                   setPnlA(1.5);
                   setPnlB(0.8);
                 }}
-                className="w-full py-4 rounded-2xl bg-text-primary hover:bg-text-primary/90 active:scale-[0.98] transition-all duration-100 text-white font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-2xs"
+                className="w-full py-4 rounded-2xl bg-text-primary hover:bg-text-primary/90 active:scale-[0.98] transition-[background-color,color,transform] duration-100 text-white font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-2xs"
               >
                 <RefreshCw className="w-4 h-4" />
                 <span>NEXT DUEL</span>
@@ -340,12 +342,12 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onSettleSucce
               <button
                 onClick={handleTriggerSettlement}
                 disabled={isSettling}
-                className="w-full py-4 rounded-2xl bg-monad-600 hover:bg-monad-700 active:scale-[0.98] transition-all duration-100 text-white font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-2xs disabled:opacity-50"
+                className="w-full py-4 rounded-2xl bg-monad-600 hover:bg-monad-700 active:scale-[0.98] transition-[background-color,color,transform] duration-100 text-white font-bold text-xs tracking-wider uppercase flex items-center justify-center gap-2 shadow-2xs disabled:opacity-50"
               >
                 {isSettling ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>SETTLING...</span>
+                    <span>SETTLING…</span>
                   </>
                 ) : (
                   <>

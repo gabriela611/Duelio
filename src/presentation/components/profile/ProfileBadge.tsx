@@ -39,12 +39,12 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
       {/* Clean Profile Header Card */}
       <div className="rounded-3xl overflow-hidden bg-surface shadow-card border border-border">
         {/* Header Area with Metrics */}
-        <div className="relative h-44 sm:h-52 w-full bg-gradient-to-br from-monad-700 to-monad-500 px-6 pt-4 pb-5 flex flex-col justify-between">
+        <div className="relative h-44 sm:h-52 w-full bg-gradient-to-br from-monad-700 to-monad-500 px-4 sm:px-6 pt-4 pb-5 flex flex-col justify-between">
           {/* Top Bar */}
           <div className="relative z-10 flex items-center justify-between text-white">
             <button
               onClick={onBack}
-              className="p-2 -ml-2 rounded-xl bg-white/10 hover:bg-white/20 text-white active:scale-95 transition-all duration-100"
+              className="p-2 -ml-2 rounded-xl bg-white/10 hover:bg-white/20 text-white active:scale-95 transition-[background-color,color,transform] duration-100"
               aria-label="Back to Arena"
             >
               <ChevronLeft className="w-5 h-5" />
@@ -56,7 +56,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 <span>Monad</span>
               </div>
 
-              <div className="relative p-2 rounded-xl bg-white/10 hover:bg-white/20 cursor-pointer active:scale-95 transition-all duration-100">
+              <div className="relative p-2 rounded-xl bg-white/10 hover:bg-white/20 cursor-pointer active:scale-95 transition-[background-color,color,transform] duration-100">
                 <Bell className="w-4 h-4 text-white" />
                 <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent"></div>
               </div>
@@ -96,6 +96,8 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
             <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl p-1 bg-surface shadow-elevated -mb-10 sm:-mb-12 shrink-0">
               <img
                 src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face"
+                width={80}
+                height={80}
                 alt="MonadWhale"
                 className="w-full h-full rounded-xl object-cover"
               />
@@ -104,21 +106,22 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
         </div>
 
         {/* User Identity */}
-        <div className="px-6 sm:px-8 pt-10 sm:pt-12 pb-6 space-y-3 border-b border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="text-2xl font-bold tracking-tight text-text-primary">
+        <div className="px-4 sm:px-8 pt-10 sm:pt-12 pb-6 space-y-3 border-b border-border">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-text-primary">
                 MonadWhale
               </h2>
               <div className="w-5 h-5 rounded-full bg-monad-600 text-white flex items-center justify-center">
                 <CheckCircle2 className="w-3.5 h-3.5" />
               </div>
-              <Share2 className="w-4 h-4 text-text-tertiary hover:text-text-primary cursor-pointer ml-1 active:scale-90 transition-all duration-100" />
+              <Share2 className="w-4 h-4 text-text-tertiary hover:text-text-primary cursor-pointer ml-1 active:scale-90 transition-[background-color,color,transform] duration-100" />
             </div>
 
             <button
               onClick={() => setIsFollowing(!isFollowing)}
-              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-100 active:scale-95 ${
+              aria-pressed={isFollowing}
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 ${
                 isFollowing
                   ? "bg-surface-secondary text-text-primary"
                   : "bg-text-primary text-white"
@@ -128,7 +131,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
             </button>
           </div>
 
-          <div className="text-sm font-mono font-semibold text-accent">
+          <div className="break-words text-sm font-mono font-semibold text-monad-700">
             $monadwhale • 0x836E...0001
           </div>
 
@@ -160,8 +163,8 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
         {/* Two Column Layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
           {/* Left: Balance & Chart */}
-          <div className="p-6 sm:p-8 space-y-5">
-            <div className="flex items-start justify-between">
+          <div className="min-w-0 p-4 sm:p-8 space-y-5">
+            <div className="flex flex-col items-start gap-4">
               <div>
                 <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide block">
                   Total Equity
@@ -186,7 +189,8 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                   <button
                     key={tf}
                     onClick={() => setTimeframe(tf)}
-                    className={`px-3 py-1 rounded-lg transition-all duration-150 active:scale-95 ${
+                    aria-pressed={timeframe === tf}
+                    className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] duration-150 active:scale-95 ${
                       timeframe === tf
                         ? "bg-surface text-text-primary shadow-2xs"
                         : "text-text-secondary"
@@ -204,6 +208,8 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
                 className="w-full h-full overflow-visible"
                 viewBox="0 0 320 80"
                 preserveAspectRatio="none"
+                role="img"
+                aria-label="Equity trend rising over the selected period"
               >
                 <path
                   d="M 0 65 Q 40 55, 80 50 T 160 38 T 240 28 T 320 18"
@@ -243,7 +249,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
           </div>
 
           {/* Right: Positions & Session */}
-          <div className="p-6 sm:p-8 space-y-6">
+          <div className="min-w-0 p-4 sm:p-8 space-y-6">
             {/* Positions */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -399,7 +405,7 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({ onBack }) => {
 
               <button
                 onClick={handleToggleSession}
-                className={`w-full py-2 rounded-xl text-xs font-semibold transition-all duration-100 active:scale-95 flex items-center justify-center gap-1.5 ${
+                className={`w-full py-2 rounded-xl text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 flex items-center justify-center gap-1.5 ${
                   sessionActive
                     ? "bg-red-50 text-red-600 border border-red-200"
                     : "bg-monad-50 text-monad-700 border border-monad-200"

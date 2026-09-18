@@ -125,7 +125,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="p-2 -ml-2 text-text-secondary hover:text-text-primary active:scale-95 transition-all duration-100 rounded-xl hover:bg-surface-secondary"
+          className="p-2 -ml-2 text-text-secondary hover:text-text-primary active:scale-95 transition-[background-color,color,transform] duration-100 rounded-xl hover:bg-surface-secondary"
           aria-label="Back to Arena"
         >
           <ChevronLeft className="w-5 h-5" />
@@ -135,6 +135,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
         <div className="flex items-center gap-6">
           <button
             onClick={() => setSubTab("global")}
+            aria-pressed={subTab === "global"}
             className={`pb-2 text-sm font-semibold transition-colors relative ${
               subTab === "global"
                 ? "text-text-primary"
@@ -149,6 +150,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
 
           <button
             onClick={() => setSubTab("rivals")}
+            aria-pressed={subTab === "rivals"}
             className={`pb-2 text-sm font-semibold transition-colors relative ${
               subTab === "rivals"
                 ? "text-text-primary"
@@ -166,11 +168,13 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
       </div>
 
       {/* Your Rank Card */}
-      <div className="rounded-3xl bg-surface p-5 shadow-card border border-border flex items-center justify-between">
-        <div className="flex items-center gap-3.5">
-          <div className="w-14 h-14 rounded-xl overflow-hidden border border-border">
+      <div className="rounded-3xl bg-surface p-5 shadow-card border border-border flex flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden border border-border">
             <img
               src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=face"
+              width={56}
+              height={56}
               alt="You"
               className="w-full h-full object-cover"
             />
@@ -180,7 +184,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
             <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide block mb-1">
               Your rank
             </span>
-            <div className="flex items-baseline gap-2">
+            <div className="flex flex-wrap items-baseline gap-2">
               <span className="font-mono font-bold text-2xl text-text-primary">
                 #302
               </span>
@@ -202,12 +206,13 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
       </div>
 
       {/* Category Filters */}
-      <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar py-1">
+      <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar p-1 -mx-1">
         {categories.map((cat) => (
           <button
             key={cat}
             onClick={() => setCategory(cat)}
-            className={`px-4 py-2 rounded-full text-xs font-semibold transition-all duration-100 whitespace-nowrap active:scale-95 ${
+            aria-pressed={category === cat}
+            className={`px-4 py-2 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 whitespace-nowrap active:scale-95 ${
               category === cat
                 ? "bg-text-primary text-white shadow-2xs"
                 : "bg-surface text-text-secondary border border-border hover:bg-surface-secondary"
@@ -219,7 +224,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
       </div>
 
       {/* Section Header with Timeframe */}
-      <div className="flex items-center justify-between pt-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
         <h3 className="text-lg font-bold text-text-primary tracking-tight">
           Top Duelists
         </h3>
@@ -230,7 +235,8 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
             <button
               key={tf}
               onClick={() => setTimeframe(tf)}
-              className={`px-3 py-1 rounded-lg transition-all active:scale-95 ${
+              aria-pressed={timeframe === tf}
+              className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] active:scale-95 ${
                 timeframe === tf
                   ? "bg-surface text-text-primary shadow-2xs"
                   : "text-text-secondary hover:text-text-primary"
@@ -247,10 +253,10 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
         {topDuelists.map((t) => (
           <div
             key={t.rank}
-            className="flex items-center justify-between py-2 transition-all hover:translate-x-1 duration-150"
+            className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between py-3 border-b border-border"
           >
             {/* Left: Rank + Avatar + Info */}
-            <div className="flex items-center gap-3.5">
+            <div className="flex min-w-0 items-center gap-3.5">
               {/* Rank Badge */}
               <div className="w-8 flex items-center justify-center shrink-0">
                 {t.rank === 1 ? (
@@ -276,6 +282,9 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
               <div className="relative shrink-0">
                 <img
                   src={t.avatar}
+                  width={48}
+                  height={48}
+                  loading="lazy"
                   alt={t.name}
                   className="w-12 h-12 rounded-xl object-cover"
                 />
@@ -287,17 +296,17 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
               </div>
 
               {/* Name & Metadata */}
-              <div>
+              <div className="min-w-0">
                 <div className="text-sm font-bold text-text-primary flex items-center gap-2">
-                  <span>{t.name}</span>
+                  <span className="truncate">{t.name}</span>
                   {t.streak >= 5 && (
-                    <span className="flex items-center text-xs text-amber-500 font-semibold">
+                    <span className="flex shrink-0 items-center text-xs text-amber-500 font-semibold">
                       <Flame className="w-3 h-3 fill-amber-400" />
                       {t.streak}
                     </span>
                   )}
                 </div>
-                <div className="text-xs font-mono text-text-secondary flex items-center gap-2 mt-0.5">
+                <div className="text-xs font-mono text-text-secondary flex flex-wrap items-center gap-x-2 mt-0.5">
                   <span>{t.handle}</span>
                   <span>•</span>
                   <span className="text-monad-600 font-semibold">{t.elo} ELO</span>
@@ -306,7 +315,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
             </div>
 
             {/* Right: PnL */}
-            <div className="text-right shrink-0">
+            <div className="flex items-center justify-between gap-2 pl-[7rem] sm:block sm:pl-0 sm:text-right shrink-0">
               <div className="text-sm font-mono font-bold text-positive">
                 {t.pnlMon} MON
               </div>

@@ -37,10 +37,11 @@ export const MobileShell: React.FC<MobileShellProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-background text-text-primary font-sans antialiased selection:bg-accent selection:text-white flex flex-col">
+    <div className="app-shell min-h-dvh bg-background text-text-primary font-sans antialiased selection:bg-accent selection:text-white flex flex-col">
+      <a href="#main-content" className="skip-link">Skip to content</a>
       {/* Clean iOS-style Top Navigation */}
-      <header className="sticky top-0 z-40 bg-surface border-b border-border shadow-soft">
-        <div className="max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+      <header className="app-header sticky top-0 z-40 border-b border-border shadow-soft">
+        <div className="safe-inline max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
 
           {/* Brand Logo */}
           <div className="flex items-center gap-3 shrink-0">
@@ -69,21 +70,22 @@ export const MobileShell: React.FC<MobileShellProps> = ({
           </div>
 
           {/* Clean Tab Navigation */}
-          <nav className="flex items-center bg-surface-secondary p-1 rounded-2xl">
+          <nav aria-label="Main navigation" className="hidden lg:flex items-center bg-surface-secondary p-1 rounded-2xl">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
                 <button
                   key={tab.id}
+                  aria-pressed={isActive}
                   onClick={() => onTabChange(tab.id)}
-                  className={`px-3 sm:px-4 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-150 flex items-center gap-1.5 active:scale-95 ${
+                  className={`px-3 sm:px-4 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-[background-color,color,transform] duration-150 flex items-center gap-1.5 active:scale-95 ${
                     isActive
                       ? "bg-surface text-text-primary shadow-2xs"
                       : "text-text-secondary hover:text-text-primary"
                   }`}
                 >
-                  <span className={isActive ? "text-monad-600" : "text-text-tertiary"}>
-                    {tab.icon}
+                  <span aria-hidden="true" className={isActive ? "bg-monad-50 text-monad-700" : "text-text-secondary hover:bg-surface-secondary"}>
+                    <span aria-hidden="true" className="[&>svg]:h-5 [&>svg]:w-5">{tab.icon}</span>
                   </span>
                   <span>{tab.label}</span>
                 </button>
@@ -94,7 +96,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({
           {/* Right: Status & Connect Button */}
           <div className="flex items-center gap-2.5 shrink-0">
             {syncStatus && (
-              <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-secondary text-[11px] font-mono text-text-secondary">
+              <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-secondary text-[11px] font-mono text-text-secondary">
                 <Zap className="w-3 h-3 text-monad-500" />
                 <span>#{syncStatus.block.toString().slice(-4)}</span>
               </div>
@@ -102,12 +104,13 @@ export const MobileShell: React.FC<MobileShellProps> = ({
 
             <button
               onClick={onConnect}
-              className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 active:scale-95 transition-all duration-100 text-xs font-semibold text-white shadow-2xs flex items-center gap-1.5"
+              aria-label={userAddress ? "Disconnect wallet" : "Connect wallet"}
+              className="px-4 py-1.5 rounded-full bg-text-primary hover:bg-text-primary/90 active:scale-95 transition-[background-color,color,transform] duration-100 text-xs font-semibold text-white shadow-2xs flex items-center gap-1.5"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-monad-400" />
               <span>
                 {userAddress
-                  ? `${userAddress.slice(0, 4)}...${userAddress.slice(-3)}`
+                  ? `${userAddress.slice(0, 4)}…${userAddress.slice(-3)}`
                   : "Connect"}
               </span>
             </button>
@@ -116,23 +119,25 @@ export const MobileShell: React.FC<MobileShellProps> = ({
       </header>
 
       {/* Main Canvas */}
-      <main className="flex-1 w-full max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-12">
+      <main id="main-content" tabIndex={-1} className="app-content safe-inline flex-1 w-full min-w-0 max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 pt-5 lg:pt-6">
+        <h1 className="sr-only">{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
         {children}
       </main>
 
       {/* Mobile Bottom Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface border-t border-border flex items-center justify-around px-2 z-40 pb-safe">
+      <nav aria-label="Main navigation" className="app-tab-bar safe-inline lg:hidden fixed bottom-0 left-0 right-0 border-t border-border grid grid-cols-4 px-2 z-40">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
+                  aria-pressed={isActive}
               onClick={() => onTabChange(tab.id)}
-              className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-colors duration-150 active:scale-95 ${
-                isActive ? "text-monad-600" : "text-text-tertiary"
+              className={`flex min-w-0 flex-col justify-center items-center gap-1 py-2 px-1 rounded-2xl transition-colors duration-150 active:scale-95 ${
+                isActive ? "bg-monad-50 text-monad-700" : "text-text-secondary hover:bg-surface-secondary"
               }`}
             >
-              {tab.icon}
+              <span aria-hidden="true" className="[&>svg]:h-5 [&>svg]:w-5">{tab.icon}</span>
               <span className="text-[10px] font-semibold">{tab.label}</span>
             </button>
           );
