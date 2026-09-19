@@ -13,14 +13,20 @@ import {
   Radio,
   CheckCircle2,
   XCircle,
+  ExternalLink,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
+import { useWallets } from "@privy-io/react-auth";
+import { parseEther } from "viem";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 import { PriceSparkline } from "./PriceSparkline";
 import { SupportedAsset, usePriceStream } from "@/infrastructure/price-feed/usePriceStream";
 import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
 import { formatNativeBalance } from "@/domain/social/identity";
-import { DUEL_ARENA_CONTRACT_ADDRESS } from "@/infrastructure/web3/monadChain";
+import { DUEL_ARENA_CONTRACT_ADDRESS, HOUSE_TREASURY_ADDRESS, monadTestnet } from "@/infrastructure/web3/monadChain";
 import { recordDuel, getPlayerStats } from "@/domain/duel/duelHistory";
+import { sendStakeToHouse } from "@/infrastructure/web3/sendStakeTransaction";
 
 interface ArenaViewProps {
   userAddress?: string;
@@ -45,10 +51,21 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
   const [settledPrice, setSettledPrice] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState<number>(10);
 
+  // On-chain transaction state
+  const { wallets } = useWallets();
+  const activeWallet =
+    wallets?.find((w) => w.address.toLowerCase() === userAddress?.toLowerCase()) ||
+    wallets?.[0];
+
+  const [isSubmittingTx, setIsSubmittingTx] = useState<boolean>(false);
+  const [entryTxHash, setEntryTxHash] = useState<string | null>(null);
+  const [payoutTxHash, setPayoutTxHash] = useState<string | null>(null);
+  const [txError, setTxError] = useState<string | null>(null);
+
   // Player Stats & Session State - Loaded from persistent records
   const [elo, setElo] = useState<number>(() => getPlayerStats(userAddress).elo);
   const [streak, setStreak] = useState<number>(() => getPlayerStats(userAddress).streak);
-  const [selectedStake, setSelectedStake] = useState<number>(0.5);
+  const [selectedStake, setSelectedStake] = useState<number>(0.1);
 
   useEffect(() => {
     const stats = getPlayerStats(userAddress);
@@ -80,17 +97,42 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
   const isWinningLive =
     playerPrediction === "HIGHER" ? currentDelta > 0 : currentDelta < 0;
 
-  // Start 10s Speed Clash
-  const handleStartRound = (direction: Direction) => {
-    if (roundState !== "IDLE" || currentPrice <= 0) return;
+  // Start 10s Speed Clash with REAL on-chain stake
+  const handleStartRound = async (direction: Direction) => {
+    if (roundState !== "IDLE" || currentPrice <= 0 || isSubmittingTx) return;
 
-    const oppDir: Direction = direction === "HIGHER" ? "LOWER" : "HIGHER";
-    setPlayerPrediction(direction);
-    setOpponentPrediction(oppDir);
-    setStrikePrice(currentPrice);
-    setTimeLeft(10);
-    setRoundState("COUNTDOWN");
-    setRoundWinner(null);
+    if (!isWalletConnected || !activeWallet) {
+      onConnect?.();
+      return;
+    }
+
+    setTxError(null);
+    setIsSubmittingTx(true);
+
+    try {
+      // Execute real on-chain stake to the House Treasury on Monad Testnet (Universal for all wallets)
+      const { txHash } = await sendStakeToHouse(activeWallet, selectedStake);
+      setEntryTxHash(txHash);
+
+      const oppDir: Direction = direction === "HIGHER" ? "LOWER" : "HIGHER";
+      setPlayerPrediction(direction);
+      setOpponentPrediction(oppDir);
+      setStrikePrice(currentPrice);
+      setTimeLeft(10);
+      setRoundState("COUNTDOWN");
+      setRoundWinner(null);
+      refreshBalance();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Transaction was rejected";
+      console.warn("Duel stake transaction rejected or failed:", msg);
+      setTxError(
+        msg.includes("User rejected") || msg.includes("denied")
+          ? "Transaction was rejected in wallet"
+          : msg
+      );
+    } finally {
+      setIsSubmittingTx(false);
+    }
   };
 
   // 10-second Countdown Loop
@@ -137,7 +179,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
         winner = "PLAYER";
         outcome = "WIN";
         eloDelta = 18;
-        payout = Number((selectedStake * 1.95).toFixed(4));
+        // 1.96x return (2% house fee subtracted)
+        payout = Number((selectedStake * 1.96).toFixed(4));
         setStreak((prev) => prev + 1);
         setElo((prev) => prev + 18);
       } else {
@@ -162,9 +205,49 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
         eloDelta,
       });
 
-      refreshBalance();
+      // On-chain settlement dispatch:
+      if (winner === "PLAYER" && payout > 0 && entryTxHash) {
+        fetch("/api/clash/settle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userAddress,
+            outcome: "WIN",
+            entryTxHash,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.payoutTxHash) {
+              setPayoutTxHash(data.payoutTxHash);
+            }
+            refreshBalance();
+          })
+          .catch((err) => console.error("Settlement payout failed:", err));
+      } else if (winner === "DRAW" && entryTxHash) {
+        fetch("/api/clash/settle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userAddress,
+            outcome: "DRAW",
+            entryTxHash,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.payoutTxHash) {
+              setPayoutTxHash(data.payoutTxHash);
+            }
+            refreshBalance();
+          })
+          .catch((err) => console.error("Draw refund failed:", err));
+      } else {
+        // Outcome is LOSS: The funds were already deposited to House Treasury on Monad Testnet!
+        refreshBalance();
+      }
     }
-  }, [timeLeft, roundState, currentPrice, strikePrice, playerPrediction, selectedStake, selectedAsset, userAddress, refreshBalance]);
+  }, [timeLeft, roundState, currentPrice, strikePrice, playerPrediction, selectedStake, selectedAsset, userAddress, entryTxHash, refreshBalance]);
 
   const handleReset = () => {
     setRoundState("IDLE");
@@ -174,6 +257,10 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
     setSettledPrice(0);
     setTimeLeft(10);
     setRoundWinner(null);
+    setEntryTxHash(null);
+    setPayoutTxHash(null);
+    setTxError(null);
+    refreshBalance();
   };
 
   return (
@@ -428,7 +515,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                   }`}
                 >
                   {roundWinner === "PLAYER"
-                    ? `+${(selectedStake * 0.95).toFixed(2)} MON · +18 ELO`
+                    ? `+${(selectedStake * 0.96).toFixed(2)} MON · +18 ELO`
                     : `-${selectedStake.toFixed(2)} MON · -12 ELO`}
                 </span>
               </div>
@@ -448,6 +535,54 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                 </div>
               </div>
 
+              {/* On-Chain Transaction Receipts on Monad Testnet */}
+              <div className="pt-2 border-t border-border space-y-1.5 text-[11px] font-mono">
+                {entryTxHash && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-tertiary">Stake Escrow Tx:</span>
+                    <a
+                      href={`https://testnet.monadscan.com/tx/${entryTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-monad-600 hover:underline inline-flex items-center gap-1 font-semibold"
+                    >
+                      <span>{entryTxHash.slice(0, 8)}…{entryTxHash.slice(-6)}</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  </div>
+                )}
+
+                {payoutTxHash && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-positive font-semibold">House Payout Tx:</span>
+                    <a
+                      href={`https://testnet.monadscan.com/tx/${payoutTxHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-positive hover:underline inline-flex items-center gap-1 font-bold"
+                    >
+                      <span>{payoutTxHash.slice(0, 8)}…{payoutTxHash.slice(-6)}</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  </div>
+                )}
+
+                {roundWinner === "OPPONENT" && (
+                  <div className="p-2.5 rounded-xl bg-negative/10 border border-negative/20 text-negative text-xs text-center font-medium">
+                    Stake of {selectedStake} MON deducted and collected by House Treasury (
+                    <a
+                      href={`https://testnet.monadscan.com/address/${HOUSE_TREASURY_ADDRESS}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline font-bold"
+                    >
+                      {HOUSE_TREASURY_ADDRESS.slice(0, 6)}…{HOUSE_TREASURY_ADDRESS.slice(-4)}
+                    </a>
+                    ).
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={handleReset}
                 className="w-full h-12 mt-2 rounded-xl bg-monad-600 hover:bg-monad-700 active:scale-95 transition-all text-xs font-bold text-white uppercase tracking-wider flex items-center justify-center gap-2 shadow-soft"
@@ -461,17 +596,36 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
           {/* CLASH STATE: 3. IDLE / READY (TWO TACTILE BUTTONS) */}
           {roundState === "IDLE" && (
             <div className="space-y-4">
+              {/* Transaction error alert */}
+              {txError && (
+                <div className="p-3 rounded-2xl bg-negative/10 border border-negative/20 text-negative text-xs flex items-center gap-2 animate-fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{txError}</span>
+                </div>
+              )}
+
+              {/* Transaction signing state */}
+              {isSubmittingTx && (
+                <div className="p-4 rounded-2xl bg-monad-50 border border-monad-200 text-monad-800 text-xs flex items-center justify-center gap-3 animate-pulse">
+                  <Loader2 className="w-5 h-5 animate-spin text-monad-600" />
+                  <span className="font-semibold">
+                    Submitting {selectedStake} MON stake to Monad Testnet… Check your wallet
+                  </span>
+                </div>
+              )}
+
               {/* Stake Selector */}
               <div className="flex items-center justify-between gap-2 pt-1">
                 <span className="text-xs font-semibold text-text-secondary">
                   Round Stake:
                 </span>
                 <div className="inline-flex items-center gap-1.5">
-                  {[0.1, 0.5, 1.0, 2.0].map((amt) => (
+                  {[0.05, 0.1, 0.25, 0.5].map((amt) => (
                     <button
                       key={amt}
                       onClick={() => setSelectedStake(amt)}
-                      className={`px-3 py-1 rounded-xl text-xs font-mono font-semibold transition-all active:scale-95 ${
+                      disabled={isSubmittingTx}
+                      className={`px-3 py-1 rounded-xl text-xs font-mono font-semibold transition-all active:scale-95 disabled:opacity-50 ${
                         selectedStake === amt
                           ? "bg-text-primary text-white shadow-soft"
                           : "bg-surface text-text-secondary hover:text-text-primary border border-border"
@@ -492,11 +646,16 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                 {/* HIGHER BUTTON */}
                 <button
                   onClick={() => handleStartRound("HIGHER")}
-                  className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-positive/30 hover:border-positive hover:bg-positive/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft"
+                  disabled={isSubmittingTx || currentPrice <= 0}
+                  className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-positive/30 hover:border-positive hover:bg-positive/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <div className="flex items-center gap-3 text-left">
                     <div className="w-10 h-10 rounded-xl bg-positive/10 text-positive flex items-center justify-center group-hover:scale-105 transition-transform">
-                      <TrendingUp className="w-5 h-5 stroke-[2.5]" />
+                      {isSubmittingTx ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <TrendingUp className="w-5 h-5 stroke-[2.5]" />
+                      )}
                     </div>
                     <div>
                       <span className="text-base font-bold text-text-primary block leading-tight">
@@ -508,18 +667,23 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                     </div>
                   </div>
                   <span className="text-xs font-mono font-bold text-positive bg-positive/10 px-2 py-1 rounded-lg">
-                    1.95x
+                    1.96x
                   </span>
                 </button>
 
                 {/* LOWER BUTTON */}
                 <button
                   onClick={() => handleStartRound("LOWER")}
-                  className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-negative/30 hover:border-negative hover:bg-negative/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft"
+                  disabled={isSubmittingTx || currentPrice <= 0}
+                  className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-negative/30 hover:border-negative hover:bg-negative/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <div className="flex items-center gap-3 text-left">
                     <div className="w-10 h-10 rounded-xl bg-negative/10 text-negative flex items-center justify-center group-hover:scale-105 transition-transform">
-                      <TrendingDown className="w-5 h-5 stroke-[2.5]" />
+                      {isSubmittingTx ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <TrendingDown className="w-5 h-5 stroke-[2.5]" />
+                      )}
                     </div>
                     <div>
                       <span className="text-base font-bold text-text-primary block leading-tight">
@@ -531,9 +695,23 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                     </div>
                   </div>
                   <span className="text-xs font-mono font-bold text-negative bg-negative/10 px-2 py-1 rounded-lg">
-                    1.95x
+                    1.96x
                   </span>
                 </button>
+              </div>
+
+              {/* House Treasury on-chain badge */}
+              <div className="pt-2 text-center text-[11px] font-mono text-text-tertiary flex items-center justify-center gap-1.5">
+                <span>⚡ Escrow On-Chain: fondos enrutados a la Casa</span>
+                <a
+                  href={`https://testnet.monadscan.com/address/${HOUSE_TREASURY_ADDRESS}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-monad-600 hover:underline font-semibold inline-flex items-center gap-0.5"
+                >
+                  <span>({HOUSE_TREASURY_ADDRESS.slice(0, 6)}…{HOUSE_TREASURY_ADDRESS.slice(-4)})</span>
+                  <ExternalLink size={9} />
+                </a>
               </div>
             </div>
           )}

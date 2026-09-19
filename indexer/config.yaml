@@ -4,11 +4,11 @@ networks:
   - id: 10143
     rpc_config:
       url: https://testnet-rpc.monad.xyz
-    start_block: 0
+    start_block: 63785724
     contracts:
       - name: DuelArena
         address:
-          - "0x0000000000000000000000000000000000000000" # Populated after deployment
+          - "0x4c4d2ebcbbf77ab9b4f0d2d236ec0ce7031d9766"
         handler: src/EventHandlers.ts
         events:
           - event: DuelCreated(uint256 indexed duelId, address indexed creator, uint256 stake, uint256 duration, bytes32 rulesHash)
