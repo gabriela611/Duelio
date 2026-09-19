@@ -3,7 +3,7 @@ description: Real-time onchain indexer for Duelio PvP arena and spectator predic
 networks:
   - id: 10143
     rpc_config:
-      url: https://rpc.testnet.monad.xyz
+      url: https://testnet-rpc.monad.xyz
     start_block: 0
     contracts:
       - name: DuelArena

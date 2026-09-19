@@ -99,47 +99,7 @@ export async function fetchLeaderboard(): Promise<Trader[]> {
       badges: t.elo >= 1500 ? ["Grandmaster", "Undefeated"] : ["Duelist"],
     }));
   } catch {
-    // Deterministic mock data for presentation before cloud deployment
-    return [
-      {
-        address: "0x836EF90000000000000000000000000000000001",
-        handle: "MonadWhale",
-        totalDuels: 42,
-        wins: 36,
-        losses: 6,
-        winRate: 0.85,
-        winStreak: 8,
-        bestStreak: 12,
-        elo: 1845,
-        totalMonWon: "128.5",
-        badges: ["Grandmaster", "Whale Slayer"],
-      },
-      {
-        address: "0x836EF90000000000000000000000000000000002",
-        handle: "CryptoKnight",
-        totalDuels: 28,
-        wins: 21,
-        losses: 7,
-        winRate: 0.75,
-        winStreak: 4,
-        bestStreak: 7,
-        elo: 1620,
-        totalMonWon: "64.2",
-        badges: ["Alpha Liquidator"],
-      },
-      {
-        address: "0x836EF90000000000000000000000000000000003",
-        handle: "DegenDueler",
-        totalDuels: 19,
-        wins: 13,
-        losses: 6,
-        winRate: 0.68,
-        winStreak: 2,
-        bestStreak: 5,
-        elo: 1410,
-        totalMonWon: "25.0",
-        badges: ["Degen Strategist"],
-      },
-    ];
+    // If indexer is not running locally, return empty array to avoid fake mock data
+    return [];
   }
 }

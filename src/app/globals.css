@@ -11,8 +11,8 @@
   --text-primary: #0B0B0B;
   --text-secondary: #858585;
   --text-tertiary: #ADADAD;
-  --border: rgba(0, 0, 0, 0.06);
-  --accent: #EF00F5;
+  --accent: #836EF9;
+  --accent-primary: #6E4EF4;
   --positive: #14CF1C;
   --negative: #FF3B30;
   --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.035);
@@ -213,41 +213,5 @@
     letter-spacing: -0.055em;
     font-variant-numeric: tabular-nums;
   }
-  .social-card {
-    position: relative;
-    overflow: hidden;
-    border-radius: 2rem;
-    padding: 1.5rem;
-    color: #171717;
-    border: 1px solid rgba(0, 0, 0, 0.05);
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04);
-    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease;
-  }
-  @media (min-width: 640px) {
-    .social-card {
-      padding: 1.75rem;
-    }
-  }
-  .social-card-lime {
-    background: linear-gradient(145deg, #edf5c0 0%, #e2eba8 100%);
-  }
-  .social-card-lilac {
-    background: linear-gradient(145deg, #ebe5f8 0%, #ded5f2 100%);
-  }
-  .social-card-peach {
-    background: linear-gradient(145deg, #fae6d8 0%, #f1d8c7 100%);
-  }
-  .social-emblem {
-    position: absolute;
-    right: -0.75rem;
-    top: 0.25rem;
-    transform: rotate(12deg);
-    opacity: 0.09;
-    pointer-events: none;
-  }
-  .social-emblem svg {
-    width: 7rem;
-    height: 7rem;
-    stroke-width: 1.2;
-  }
 }
+

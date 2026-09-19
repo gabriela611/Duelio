@@ -14,7 +14,10 @@ export function requestBalance(
   publish({ address, status: "loading" });
   Promise.resolve().then(() => read(address)).then(
     (value) => { if (!cancelled) publish({ address, status: "ready", value }); },
-    () => { if (!cancelled) publish({ address, status: "error" }); },
+    (error) => {
+      console.error("[useNativeBalance] Failed to fetch balance for", address, error);
+      if (!cancelled) publish({ address, status: "error" });
+    },
   );
   return () => { cancelled = true; };
 }

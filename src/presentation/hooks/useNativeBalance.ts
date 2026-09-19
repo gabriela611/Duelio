@@ -6,7 +6,13 @@ import { monadTestnet } from "@/infrastructure/web3/monadChain";
 import { balanceForAccount, requestBalance, type BalanceState } from "@/infrastructure/web3/balanceRequest";
 import { normalizeAddress } from "@/domain/social/identity";
 
-const client = createPublicClient({ chain: monadTestnet, transport: http(undefined, { timeout: 10_000, retryCount: 1 }) });
+const client = createPublicClient({
+  chain: monadTestnet,
+  transport: http(monadTestnet.rpcUrls.default.http[0], {
+    timeout: 10_000,
+    retryCount: 2,
+  }),
+});
 
 export function useNativeBalance(walletAddress?: string) {
   const address = normalizeAddress(walletAddress);
@@ -18,8 +24,36 @@ export function useNativeBalance(walletAddress?: string) {
       setState({ status: "disconnected" });
       return;
     }
-    return requestBalance(address,
-      (account) => client.getBalance({ address: account as `0x${string}` }), setState);
+
+    const cancel = requestBalance(
+      address,
+      (account) => client.getBalance({ address: account as `0x${string}` }),
+      setState,
+    );
+
+    // Auto-refresh on a 10s cadence so faucet drops and transactions reflect live
+    const interval = setInterval(() => {
+      requestBalance(
+        address,
+        (account) => client.getBalance({ address: account as `0x${string}` }),
+        setState,
+      );
+    }, 10_000);
+
+    const onFocus = () => {
+      requestBalance(
+        address,
+        (account) => client.getBalance({ address: account as `0x${string}` }),
+        setState,
+      );
+    };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancel();
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [address, revision]);
 
   // Never expose the previous account's balance, even before the effect runs.

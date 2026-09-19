@@ -36,35 +36,31 @@ export const MobileShell: React.FC<MobileShellProps> = ({
   ];
 
   return (
-    <div className="app-shell min-h-dvh bg-background text-text-primary font-sans antialiased selection:bg-accent selection:text-white flex flex-col">
+    <div className="app-shell min-h-dvh bg-background text-text-primary font-sans antialiased selection:bg-text-primary selection:text-white flex flex-col">
       <a href="#main-content" className="skip-link">Skip to content</a>
-      {/* Clean iOS-style Top Navigation */}
-      <header className="app-header sticky top-0 z-40 border-b border-border shadow-soft">
-        <div className="safe-inline max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
 
-          {/* Brand Logo */}
+      {/* Clean iOS-Style Top Navigation per design.md Section 12 */}
+      <header className="sticky top-0 z-40 bg-surface border-b border-border shadow-soft">
+        <div className="safe-inline max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-6">
+
+          {/* Brand Logo - Native & Disciplined */}
           <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={() => onTabChange("home")}
               className="flex items-center gap-2.5 text-left group active:scale-95 transition-transform duration-100"
+              aria-label="Duelio Home"
             >
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-monad-500 to-monad-700 flex items-center justify-center shadow-xs">
+              <div className="w-8 h-8 rounded-xl bg-monad-600 flex items-center justify-center text-white shadow-soft">
                 <Swords className="w-4 h-4 text-white" />
               </div>
-              <div>
-                <span className="font-bold text-base tracking-tight text-text-primary block leading-tight">
-                  duelio
-                </span>
-                <span className="text-[10px] font-semibold text-monad-600 tracking-tight block leading-tight">
-                  Play. Connect. Rise.
-                </span>
-              </div>
+              <span className="font-bold text-base tracking-tight text-text-primary block leading-none">
+                duelio
+              </span>
             </button>
-
           </div>
 
-          {/* Clean Tab Navigation */}
-          <nav aria-label="Main navigation" className="hidden lg:flex items-center bg-surface-secondary/90 p-1.5 rounded-2xl border border-border/80 backdrop-blur-md">
+          {/* Desktop Textual Tabs with Thin Underline per design.md Section 13 */}
+          <nav aria-label="Main navigation" className="hidden lg:flex items-center gap-8 h-full">
             {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
@@ -72,47 +68,53 @@ export const MobileShell: React.FC<MobileShellProps> = ({
                   key={tab.id}
                   aria-pressed={isActive}
                   onClick={() => onTabChange(tab.id)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 flex items-center gap-1.5 active:scale-95 ${
+                  className={`relative h-full flex items-center gap-1.5 text-sm font-semibold transition-colors duration-150 ${
                     isActive
-                      ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                      : "text-text-secondary hover:text-text-primary hover:bg-surface-tertiary/60"
+                      ? "text-text-primary font-bold"
+                      : "text-text-secondary hover:text-text-primary"
                   }`}
                 >
                   <span aria-hidden="true" className={isActive ? "text-monad-600" : "text-text-secondary"}>
-                    <span aria-hidden="true" className="[&>svg]:h-4 [&>svg]:w-4">{tab.icon}</span>
+                    {tab.icon}
                   </span>
                   <span>{tab.label}</span>
+                  {isActive && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-monad-600 rounded-full" />
+                  )}
                 </button>
               );
             })}
           </nav>
 
-          {/* Right: Status & Connect Button */}
+          {/* Right: Primary Action Connect Button in Monad Purple */}
           <div className="flex items-center gap-2.5 shrink-0">
             <button
               onClick={onConnect}
               aria-label={userAddress ? "Disconnect wallet" : "Connect wallet"}
-              className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 active:scale-95 transition-[background-color,color,transform] duration-100 text-xs font-semibold text-white shadow-xs flex items-center gap-1.5"
+              className="h-10 px-4 rounded-xl bg-monad-600 hover:bg-monad-700 active:scale-95 transition-all text-xs font-semibold text-white shadow-soft flex items-center gap-1.5"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-white" />
               <span>
                 {userAddress
-                  ? `${userAddress.slice(0, 4)}…${userAddress.slice(-3)}`
-                  : "Connect"}
+                  ? `${userAddress.slice(0, 5)}…${userAddress.slice(-4)}`
+                  : "Connect Wallet"}
               </span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Canvas */}
+      {/* Main Content Area */}
       <main id="main-content" tabIndex={-1} className="app-content safe-inline flex-1 w-full min-w-0 max-w-[1360px] mx-auto px-4 sm:px-6 lg:px-8 pt-5 lg:pt-6">
         <h1 className="sr-only">{tabs.find((tab) => tab.id === activeTab)?.label}</h1>
         {children}
       </main>
 
-      {/* Mobile Bottom Bar */}
-      <nav aria-label="Main navigation" className="app-tab-bar safe-inline lg:hidden fixed bottom-0 left-0 right-0 border-t border-border grid grid-cols-5 px-1 sm:px-2 z-40">
+      {/* Clean Mobile iOS Bottom Tab Bar per design.md Section 12 */}
+      <nav
+        aria-label="Mobile navigation"
+        className="lg:hidden fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-md border-t border-border grid grid-cols-5 px-1 pb-[env(safe-area-inset-bottom)] pt-1.5 z-40"
+      >
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -120,16 +122,16 @@ export const MobileShell: React.FC<MobileShellProps> = ({
               key={tab.id}
               aria-pressed={isActive}
               onClick={() => onTabChange(tab.id)}
-              className={`flex min-w-0 flex-col justify-center items-center gap-1 py-1.5 px-0.5 rounded-2xl transition-all duration-150 active:scale-95 ${
-                isActive
-                  ? "bg-slate-200/90 text-text-primary border border-slate-300/80 font-bold shadow-xs"
-                  : "text-text-secondary hover:bg-surface-secondary/70"
+              className={`flex min-w-0 flex-col justify-center items-center gap-1 py-1 px-0.5 transition-colors active:scale-95 ${
+                isActive ? "text-monad-600 font-bold" : "text-text-secondary"
               }`}
             >
-              <span aria-hidden="true" className={`[&>svg]:h-5 [&>svg]:w-5 ${isActive ? "text-monad-600" : "text-text-secondary"}`}>
+              <span aria-hidden="true" className={isActive ? "text-monad-600" : "text-text-secondary"}>
                 {tab.icon}
               </span>
-              <span className="text-[10px] font-semibold truncate max-w-full leading-tight">{tab.label}</span>
+              <span className="text-[11px] leading-tight truncate max-w-full font-medium">
+                {tab.label}
+              </span>
             </button>
           );
         })}

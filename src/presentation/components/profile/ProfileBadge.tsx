@@ -1,28 +1,28 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import React, { useState } from "react";
 import {
   ChevronLeft,
-  Bell,
   CheckCircle2,
-  Share2,
-  Clock,
   Swords,
-  Trophy,
-  Calendar,
-  Key,
-  AlertTriangle,
-  Zap,
-  TrendingUp,
   ShieldCheck,
   Flame,
-  ArrowUpRight,
+  ExternalLink,
+  Copy,
+  Check,
+  RefreshCw,
+  Clock,
+  TrendingUp,
+  TrendingDown,
+  Key,
 } from "lucide-react";
 import { DUELIO_SESSION_POLICY } from "@/infrastructure/web3/privyConfig";
+import { DUEL_ARENA_CONTRACT_ADDRESS, HOUSE_TREASURY_ADDRESS } from "@/infrastructure/web3/monadChain";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
-
-import { canFollow, normalizeAddress } from "@/domain/social/identity";
+import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
+import { formatNativeBalance, normalizeAddress } from "@/domain/social/identity";
+import { getPlayerStats, getDuelHistory } from "@/domain/duel/duelHistory";
+import { toggleFollowUser, getFollowingList } from "@/domain/social/socialService";
 import type { SampleProfile } from "@/domain/social/sampleActivity";
 
 interface ProfileBadgeProps {
@@ -37,452 +37,450 @@ interface ProfileBadgeProps {
 
 export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
   onBack,
-  following = false,
-  onToggleFollow,
   viewerAddress,
   profile,
   onConnect,
   onArena,
+  onToggleFollow,
 }) => {
-  const [timeframe, setTimeframe] = useState<"24h" | "7d" | "30d">("7d");
-  const followAllowed = canFollow(viewerAddress, profile?.address);
-  const isFollowing = followAllowed && following;
-  const handleFollow = () => {
-    if (canFollow(viewerAddress, profile?.address)) onToggleFollow?.();
-  };
-  const [sessionActive, setSessionActive] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const targetAddress = profile?.address || viewerAddress;
+  const isConnected = Boolean(viewerAddress);
+  const isOwnProfile = !profile || profile.address === viewerAddress;
 
-  const handleToggleSession = () => {
-    setSessionActive((prev) => !prev);
+  const [followingList, setFollowingList] = useState<string[]>(() => getFollowingList(viewerAddress));
+  const isFollowing = targetAddress ? followingList.includes(normalizeAddress(targetAddress) || "") : false;
+
+  const handleToggleFollow = () => {
+    if (!viewerAddress || !targetAddress) return;
+    toggleFollowUser(viewerAddress, targetAddress);
+    setFollowingList(getFollowingList(viewerAddress));
+    onToggleFollow?.();
   };
 
-  const activeProfile: SampleProfile = profile ?? {
-    name: "MonadWhale",
-    initials: "MW",
-    address: viewerAddress ?? "0x836E101400000000000000000000000000000001",
-    elo: 1845,
-    wins: 68,
-    duels: 82,
-    rank: 302,
+  const nativeBalance = useNativeBalance(targetAddress);
+  const stats = getPlayerStats(targetAddress);
+  const matchHistory = getDuelHistory(targetAddress);
+
+  const displayAddress = targetAddress
+    ? `${targetAddress.slice(0, 6)}…${targetAddress.slice(-4)}`
+    : "Not Connected";
+
+  const handleCopy = () => {
+    if (!targetAddress) return;
+    navigator.clipboard.writeText(targetAddress);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
+
+  const balanceFormatted =
+    nativeBalance.status === "ready" && nativeBalance.value !== undefined
+      ? formatNativeBalance(nativeBalance.value)
+      : nativeBalance.status === "loading"
+      ? "Checking…"
+      : nativeBalance.status === "error"
+      ? "Unavailable"
+      : "0.00";
 
   return (
-    <div className="max-w-4xl mx-auto w-full space-y-6">
-      {profile ? (
-        <p className="rounded-2xl bg-surface border border-border p-3.5 sm:p-4 text-xs leading-relaxed text-text-secondary shadow-card">
-          Sample duelist profile · All statistics and demonstration positions are local to this session.
-        </p>
-      ) : (
-        <div className="rounded-2xl bg-surface border border-border p-3.5 sm:p-4 text-xs font-medium text-text-secondary shadow-card flex flex-wrap items-center justify-between gap-2">
-          <span>Connected Duelist Profile</span>
-          <span className="font-mono text-monad-600 font-semibold">
-            {viewerAddress ? `${viewerAddress.slice(0, 6)}…${viewerAddress.slice(-4)}` : "Demo Account (0x836E…0001)"}
+    <div className="max-w-4xl mx-auto w-full space-y-6 pb-8">
+      {/* Top Header Navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={onBack}
+          className="p-2 -ml-2 text-text-secondary hover:text-text-primary active:scale-95 transition-all rounded-xl hover:bg-surface-secondary flex items-center gap-1 text-sm font-semibold"
+          aria-label="Back"
+        >
+          <ChevronLeft className="w-5 h-5" />
+          <span>Back</span>
+        </button>
+
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-positive animate-pulse" />
+          <span className="text-xs font-mono font-semibold text-text-secondary">
+            Monad Testnet • 10143
           </span>
         </div>
-      )}
+      </div>
 
-      {/* Clean Profile Header Card */}
-      <div className="rounded-3xl overflow-hidden bg-surface shadow-card border border-border">
-        {/* Header Area with Metrics */}
-        <div className="relative h-44 sm:h-52 w-full bg-gradient-to-br from-monad-700 to-monad-500 px-4 sm:px-6 pt-4 pb-5 flex flex-col justify-between">
-          {/* Top Bar */}
-          <div className="relative z-10 flex items-center justify-between text-white">
-            <button
-              onClick={onBack}
-              className="p-2 -ml-2 rounded-xl bg-white/10 hover:bg-white/20 text-white active:scale-95 transition-[background-color,color,transform] duration-100"
-              aria-label="Back to Home"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
+      {/* Hero Profile Surface per design.md Section 3.1 & 8 */}
+      <section
+        className="rounded-3xl overflow-hidden bg-surface shadow-soft border border-border"
+        aria-label="Duelist Profile"
+      >
+        {/* Monad Purple Header Banner */}
+        <div className="relative h-40 sm:h-44 w-full bg-gradient-to-br from-monad-700 via-monad-600 to-monad-800 p-5 sm:p-6 flex flex-col justify-between text-white">
+          <div className="flex items-center justify-between">
+            <span className="px-3 py-1 rounded-full bg-white/15 text-xs font-semibold backdrop-blur-sm">
+              {isOwnProfile ? "Your Duelist Profile" : "Rival Duelist Profile"}
+            </span>
 
-            <div className="flex items-center gap-2.5">
-              <div className="px-3 py-1 rounded-full bg-white/10 text-xs font-medium text-white/90 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-positive animate-pulse"></span>
-                <span>Monad</span>
-              </div>
-
-              <div className="relative p-2 rounded-xl bg-white/10 hover:bg-white/20 cursor-pointer active:scale-95 transition-[background-color,color,transform] duration-100">
-                <Bell className="w-4 h-4 text-white" />
-                <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-accent"></div>
-              </div>
-            </div>
+            {targetAddress && (
+              <a
+                href={`https://testnet.monadscan.com/address/${targetAddress}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1 rounded-full bg-white/15 hover:bg-white/25 text-xs font-semibold backdrop-blur-sm transition-all flex items-center gap-1"
+              >
+                <span>Monadscan</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
           </div>
 
-          {/* Bottom: Stats & Avatar */}
-          <div className="relative z-10 flex items-end justify-between">
-            <div className="flex items-center gap-4 sm:gap-5 text-white">
+          {/* Quick Metrics Bar on Banner */}
+          <div className="flex items-end justify-between">
+            <div className="flex items-center gap-5 sm:gap-7">
               <div>
-                <span className="font-mono font-bold text-xl leading-tight block">
-                  {activeProfile.elo.toLocaleString("en-US")}
+                <span className="font-mono font-bold text-xl sm:text-2xl leading-tight block">
+                  {stats.elo}
                 </span>
-                <span className="text-xs text-white/80 font-medium">
-                  Master ELO
+                <span className="text-[11px] text-white/80 font-medium uppercase tracking-wider">
+                  ELO Rating
                 </span>
               </div>
               <div>
-                <span className="font-mono font-bold text-xl leading-tight block text-positive">
-                  {((activeProfile.wins / activeProfile.duels) * 100).toFixed(1)}%
+                <span className="font-mono font-bold text-xl sm:text-2xl leading-tight block text-positive">
+                  {stats.totalDuels > 0 ? `${(stats.winRate * 100).toFixed(0)}%` : "—"}
                 </span>
-                <span className="text-xs text-white/80 font-medium">
+                <span className="text-[11px] text-white/80 font-medium uppercase tracking-wider">
                   Win Rate
                 </span>
               </div>
-              <div className="hidden sm:block">
-                <span className="font-mono font-bold text-xl leading-tight block">
-                  #{activeProfile.rank}
+              <div>
+                <span className="font-mono font-bold text-xl sm:text-2xl leading-tight block flex items-center gap-1">
+                  <Flame className="w-4 h-4 text-amber-300 fill-amber-300" />
+                  <span>{stats.streak}</span>
                 </span>
-                <span className="text-xs text-white/80 font-medium">
-                  Rank
+                <span className="text-[11px] text-white/80 font-medium uppercase tracking-wider">
+                  Streak
                 </span>
               </div>
             </div>
 
-            {/* Avatar */}
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl p-1 bg-surface shadow-elevated -mb-10 sm:-mb-12 shrink-0">
-              <img
-                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face"
-                width={80}
-                height={80}
-                alt={activeProfile.name}
-                className="w-full h-full rounded-xl object-cover"
-              />
+            {/* Apple-style Monogram Avatar */}
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-surface border-4 border-surface shadow-soft -mb-10 sm:-mb-12 shrink-0 flex items-center justify-center relative">
+              <div className="w-full h-full rounded-xl bg-surface-secondary flex items-center justify-center font-mono font-bold text-xl sm:text-2xl text-monad-700">
+                {targetAddress ? targetAddress.slice(2, 4).toUpperCase() : "??"}
+              </div>
+              <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-positive border-2 border-surface" />
             </div>
           </div>
         </div>
 
-        {/* User Identity */}
-        <div className="px-4 sm:px-8 pt-10 sm:pt-12 pb-6 space-y-3 border-b border-border">
+        {/* Identity & Actions Container */}
+        <div className="px-5 sm:px-7 pt-12 pb-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-text-primary">
-                {activeProfile.name}
-              </h2>
-              <div className="w-5 h-5 rounded-full bg-monad-600 text-white flex items-center justify-center">
-                <CheckCircle2 className="w-3.5 h-3.5" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-text-primary">
+                  {profile?.name || (targetAddress ? `Duelist ${targetAddress.slice(2, 6)}` : "Guest Duelist")}
+                </h2>
+                <div className="w-5 h-5 rounded-full bg-monad-600 text-white flex items-center justify-center">
+                  <CheckCircle2 className="w-3 h-3" />
+                </div>
               </div>
-              <Share2 className="w-4 h-4 text-text-tertiary hover:text-text-primary cursor-pointer ml-1 active:scale-90 transition-[background-color,color,transform] duration-100" />
+
+              {targetAddress ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="font-mono text-xs font-semibold text-text-secondary">
+                    {displayAddress}
+                  </span>
+                  <button
+                    onClick={handleCopy}
+                    className="text-text-tertiary hover:text-text-primary transition-colors p-1 rounded hover:bg-surface-secondary"
+                    aria-label="Copy wallet address"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-positive" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-text-secondary mt-1">
+                  Connect your wallet to participate on Monad Testnet
+                </p>
+              )}
             </div>
 
-            {profile ? (
+            {/* Header Call to Actions */}
+            {/* Header Call to Actions */}
+            <div className="flex items-center gap-2">
+              {!isOwnProfile && targetAddress && isConnected && (
+                <button
+                  onClick={handleToggleFollow}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold active:scale-95 transition-all shadow-soft flex items-center gap-1 ${
+                    isFollowing
+                      ? "bg-surface border border-border text-text-primary hover:bg-surface-secondary"
+                      : "bg-monad-600 hover:bg-monad-700 text-white"
+                  }`}
+                >
+                  <span>{isFollowing ? "Following" : "Follow"}</span>
+                </button>
+              )}
+              {isConnected ? (
+                <>
+                  <a
+                    href="https://testnet.monad.xyz"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-2 rounded-xl bg-surface hover:bg-surface-secondary border border-border text-xs font-semibold text-text-primary flex items-center gap-1.5 active:scale-95 transition-all shadow-soft"
+                  >
+                    <span>Get MON</span>
+                    <ExternalLink className="w-3 h-3 text-text-tertiary" />
+                  </a>
+                  {onArena && (
+                    <button
+                      onClick={onArena}
+                      className="px-4 py-2 rounded-xl bg-monad-600 hover:bg-monad-700 text-xs font-semibold text-white flex items-center gap-1.5 active:scale-95 transition-all shadow-soft"
+                    >
+                      <Swords className="w-3.5 h-3.5" />
+                      <span>{isOwnProfile ? "Enter Arena" : "Challenge"}</span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button
+                  onClick={onConnect}
+                  className="px-4 py-2 rounded-xl bg-monad-600 hover:bg-monad-700 text-xs font-semibold text-white flex items-center gap-1.5 active:scale-95 transition-all shadow-soft"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Connect Wallet</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Metrics Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+            <div className="p-3.5 rounded-2xl bg-surface-secondary border border-border space-y-1">
+              <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+                Total Duels
+              </span>
+              <span className="font-mono font-bold text-lg text-text-primary">
+                {stats.totalDuels}
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-surface-secondary border border-border space-y-1">
+              <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+                Combat Record
+              </span>
+              <span className="font-mono font-bold text-lg text-text-primary">
+                {stats.wins}W · {stats.losses}L
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-surface-secondary border border-border space-y-1">
+              <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+                Best Streak
+              </span>
+              <span className="font-mono font-bold text-lg text-amber-600">
+                {stats.bestStreak}x
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-surface-secondary border border-border space-y-1">
+              <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+                Total MON Won
+              </span>
+              <span className="font-mono font-bold text-lg text-positive">
+                +{stats.totalMonWon.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Two Column Section: Real On-Chain Wallet Balance & Session Security Policy */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Real On-Chain Monad Balance Surface */}
+        <section
+          className="rounded-3xl bg-surface p-5 sm:p-6 border border-border shadow-soft space-y-4"
+          aria-label="Monad Testnet Balance"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AssetLogo symbol="MON" size={24} />
+              <h3 className="text-sm font-bold text-text-primary">
+                Monad Testnet Wallet
+              </h3>
+            </div>
+            {targetAddress && (
               <button
-                onClick={handleFollow}
-                disabled={!followAllowed}
-                aria-pressed={isFollowing}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 ${
-                  isFollowing
-                    ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                    : "bg-monad-600 hover:bg-monad-700 text-white shadow-xs"
-                }`}
+                onClick={nativeBalance.refresh}
+                disabled={nativeBalance.status === "loading"}
+                aria-label="Refresh balance"
+                className="w-8 h-8 flex items-center justify-center rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-secondary active:scale-95 transition-all disabled:opacity-40"
               >
-                {normalizeAddress(viewerAddress) === normalizeAddress(profile.address) ? "Your profile" : !viewerAddress ? "Connect to follow" : isFollowing ? "Following · local" : "Follow"}
-              </button>
-            ) : viewerAddress ? (
-              <button
-                onClick={onArena}
-                className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
-              >
-                <Swords className="w-3.5 h-3.5" />
-                <span>Enter Arena</span>
-              </button>
-            ) : (
-              <button
-                onClick={onConnect}
-                className="px-4 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all shadow-xs"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-white" />
-                <span>Connect Wallet</span>
+                <RefreshCw size={14} className={nativeBalance.status === "loading" ? "animate-spin" : ""} />
               </button>
             )}
           </div>
 
-          <div className="break-words text-sm font-mono font-semibold text-monad-700">
-            {activeProfile.address.slice(0, 6)}…{activeProfile.address.slice(-4)}
+          <div>
+            <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+              Available Native Balance
+            </span>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-3xl font-mono font-bold text-text-primary tracking-tight">
+                {balanceFormatted}
+              </span>
+              <span className="text-lg font-bold text-text-tertiary font-mono">
+                MON
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs text-text-secondary">
+              Verified live on-chain against RPC https://testnet-rpc.monad.xyz
+            </p>
           </div>
 
-          <p className="text-sm text-text-secondary font-medium leading-relaxed max-w-2xl">
-            High-frequency PvP trader in the practice arena. Specializing in sub-minute tactical allocation clashes.
+          <div className="pt-2 border-t border-border flex items-center justify-between text-xs">
+            <span className="text-text-secondary">Chain ID:</span>
+            <span className="font-mono font-semibold text-text-primary">10143 (Testnet)</span>
+          </div>
+        </section>
+
+        {/* Active Privy Session Signer & Escrow Security Policy */}
+        <section
+          className="rounded-3xl bg-surface p-5 sm:p-6 border border-border shadow-soft space-y-4"
+          aria-label="Session Security Policy"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Key className="w-5 h-5 text-monad-600" />
+              <h3 className="text-sm font-bold text-text-primary">
+                Privy Session Policy
+              </h3>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-positive/10 text-positive text-[11px] font-semibold font-mono border border-positive/20">
+              ACTIVE
+            </span>
+          </div>
+
+          <p className="text-xs text-text-secondary leading-relaxed">
+            Duelio uses scoped delegated actions to submit 10-second clash outcomes without repeated wallet signature popups.
           </p>
 
-          {/* Metadata */}
-          <div className="flex items-center gap-4 sm:gap-6 pt-1 text-xs text-text-secondary font-medium flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <Swords className="w-3.5 h-3.5 text-monad-500" />
-              <span>{activeProfile.duels} Duels · {activeProfile.wins} Wins</span>
+          <div className="space-y-2 bg-surface-secondary p-3 rounded-2xl text-xs font-mono">
+            <div className="flex items-center justify-between">
+              <span className="text-text-tertiary">Max Spend / Clash:</span>
+              <span className="font-semibold text-text-primary">{DUELIO_SESSION_POLICY.maxSpendMon} MON</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Flame className="w-3.5 h-3.5 text-amber-500" />
-              <span>5x Streak</span>
+            <div className="flex items-center justify-between">
+              <span className="text-text-tertiary">Session TTL:</span>
+              <span className="font-semibold text-text-primary">{DUELIO_SESSION_POLICY.expiresInSeconds / 60} minutes</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5" />
-              <span>Avg: 60s</span>
+            <div className="flex items-center justify-between">
+              <span className="text-text-tertiary">Target Arena:</span>
+              <span className="font-semibold text-monad-600 truncate max-w-[180px]">
+                {DUEL_ARENA_CONTRACT_ADDRESS === "0x0000000000000000000000000000000000000000" ? "Pending Deployment" : DUEL_ARENA_CONTRACT_ADDRESS}
+              </span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>Since Sep 2026</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Two Column Layout */}
-        <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
-          {/* Left: Balance & Chart */}
-          <div className="min-w-0 p-4 sm:p-8 space-y-5">
-            <div className="flex flex-col items-start gap-4">
-              <div>
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide block">
-                  Total Equity
-                </span>
-                <div className="flex items-baseline text-text-primary font-bold tracking-tight mt-1">
-                  <span className="text-4xl sm:text-5xl font-mono">
-                    358.50
-                  </span>
-                  <span className="text-xl font-semibold text-monad-600 ml-2">
-                    MON
-                  </span>
-                </div>
-                <div className="text-sm font-mono font-semibold text-positive mt-1 flex items-center gap-1">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  <span>+48.20 MON (+15.6%)</span>
-                </div>
-              </div>
-
-              {/* Timeframe Selector */}
-              <div className="flex items-center bg-surface-secondary p-1 rounded-xl text-xs font-semibold">
-                {(["24h", "7d", "30d"] as const).map((tf) => (
-                  <button
-                    key={tf}
-                    onClick={() => setTimeframe(tf)}
-                    aria-pressed={timeframe === tf}
-                    className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] duration-150 active:scale-95 ${
-                      timeframe === tf
-                        ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                        : "text-text-secondary hover:text-text-primary"
-                    }`}
-                  >
-                    {tf}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Clean Chart */}
-            <div className="w-full h-32 my-2 relative">
-              <svg
-                className="w-full h-full overflow-visible"
-                viewBox="0 0 320 80"
-                preserveAspectRatio="none"
-                role="img"
-                aria-label="Equity trend rising over the selected period"
+            <div className="flex items-center justify-between border-t border-border/50 pt-2">
+              <span className="text-text-tertiary">House Treasury:</span>
+              <a
+                href={`https://testnet.monadscan.com/address/${HOUSE_TREASURY_ADDRESS}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-monad-600 hover:underline inline-flex items-center gap-1"
+                title="View House Treasury on Monadscan"
               >
-                <path
-                  d="M 0 65 Q 40 55, 80 50 T 160 38 T 240 28 T 320 18"
-                  fill="none"
-                  stroke="#14CF1C"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-                <circle
-                  cx="320"
-                  cy="18"
-                  r="4"
-                  fill="#14CF1C"
-                />
-              </svg>
-            </div>
-
-            {/* Breakdown */}
-            <div className="space-y-2 pt-2 border-t border-border">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-text-secondary">
-                  Active Escrow
-                </span>
-                <span className="font-mono font-semibold text-text-primary">
-                  128.50 MON
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-text-secondary">
-                  Wallet Balance
-                </span>
-                <span className="font-mono font-semibold text-text-primary">
-                  230.00 MON
-                </span>
-              </div>
+                <span>{HOUSE_TREASURY_ADDRESS.slice(0, 6)}…{HOUSE_TREASURY_ADDRESS.slice(-4)}</span>
+                <ExternalLink size={11} />
+              </a>
             </div>
           </div>
-
-          {/* Right: Positions & Session */}
-          <div className="min-w-0 p-4 sm:p-8 space-y-6">
-            {/* Positions */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase text-text-secondary tracking-wide">
-                  Positions
-                </h4>
-                <span className="text-xs font-mono text-text-tertiary">
-                  4 Assets
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {/* Monad */}
-                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
-                  <div className="flex items-center gap-3">
-                    <AssetLogo symbol="MON" size={36} />
-                    <div>
-                      <div className="text-sm font-bold text-text-primary">
-                        Monad Native
-                      </div>
-                      <div className="text-xs text-text-secondary font-mono">
-                        120.0 MON • 2x Long
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-mono font-semibold text-text-primary">
-                      $2,286.00
-                    </div>
-                    <div className="text-xs font-mono font-semibold text-positive">
-                      +9.34%
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bitcoin */}
-                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
-                  <div className="flex items-center gap-3">
-                    <AssetLogo symbol="BTC" size={36} />
-                    <div>
-                      <div className="text-sm font-bold text-text-primary">
-                        Bitcoin
-                      </div>
-                      <div className="text-xs text-text-secondary font-mono">
-                        0.05 BTC • 1x Spot
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-mono font-semibold text-text-primary">
-                      $4,840.00
-                    </div>
-                    <div className="text-xs font-mono font-semibold text-positive">
-                      +2.76%
-                    </div>
-                  </div>
-                </div>
-
-                {/* Ethereum */}
-                <div className="flex items-center justify-between py-2.5 border-b border-border/50">
-                  <div className="flex items-center gap-3">
-                    <AssetLogo symbol="ETH" size={36} />
-                    <div>
-                      <div className="text-sm font-bold text-text-primary">
-                        Ethereum
-                      </div>
-                      <div className="text-xs text-text-secondary font-mono">
-                        0.85 ETH • 1x Spot
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-mono font-semibold text-text-primary">
-                      $2,303.50
-                    </div>
-                    <div className="text-xs font-mono font-semibold text-positive">
-                      +2.65%
-                    </div>
-                  </div>
-                </div>
-
-                {/* Solana */}
-                <div className="flex items-center justify-between py-2.5">
-                  <div className="flex items-center gap-3">
-                    <AssetLogo symbol="SOL" size={36} />
-                    <div>
-                      <div className="text-sm font-bold text-text-primary">
-                        Solana
-                      </div>
-                      <div className="text-xs text-text-secondary font-mono">
-                        8.50 SOL • 1.5x Long
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-mono font-semibold text-text-primary">
-                      $1,547.00
-                    </div>
-                    <div className="text-xs font-mono font-semibold text-positive">
-                      +6.00%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Session Key Card */}
-            <div className="p-4 rounded-2xl bg-surface border border-border space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Key className="w-4 h-4 text-monad-600" />
-                  <h4 className="text-xs font-bold text-text-primary uppercase tracking-wide">
-                    Session Key
-                  </h4>
-                </div>
-                <span
-                  className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full ${
-                    sessionActive
-                      ? "bg-green-50 text-green-700"
-                      : "bg-red-50 text-red-700"
-                  }`}
-                >
-                  {sessionActive ? "ACTIVE" : "REVOKED"}
-                </span>
-              </div>
-
-              <div className="space-y-1 text-xs font-mono text-text-secondary bg-surface-secondary p-2.5 rounded-xl">
-                <div className="flex justify-between">
-                  <span>Chain:</span>
-                  <span className="font-semibold text-text-primary">
-                    Monad {DUELIO_SESSION_POLICY.chainId}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Contract:</span>
-                  <span className="font-semibold text-monad-600">DuelArena</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Limit:</span>
-                  <span className="font-semibold text-text-primary">
-                    {DUELIO_SESSION_POLICY.maxSpendMon} MON
-                  </span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleToggleSession}
-                className={`w-full py-2 rounded-xl text-xs font-semibold transition-[background-color,color,transform] duration-100 active:scale-95 flex items-center justify-center gap-1.5 ${
-                  sessionActive
-                    ? "bg-red-50 text-red-600 border border-red-200"
-                    : "bg-monad-50 text-monad-700 border border-monad-200"
-                }`}
-              >
-                {sessionActive ? (
-                  <>
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>Preview revoke</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Preview authorize</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+        </section>
       </div>
+
+      {/* Recent 10-Second Duel History Section */}
+      <section
+        className="rounded-3xl bg-surface p-5 sm:p-6 border border-border shadow-soft space-y-4"
+        aria-label="Duel Match History"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-text-tertiary" />
+            <h3 className="text-sm font-bold text-text-primary">
+              Recent 10s Clashes
+            </h3>
+          </div>
+          <span className="text-xs font-mono text-text-tertiary">
+            {matchHistory.length} Recorded
+          </span>
+        </div>
+
+        {matchHistory.length === 0 ? (
+          <div className="py-8 text-center space-y-2">
+            <p className="text-xs text-text-secondary">
+              No recent duels recorded on this device yet.
+            </p>
+            {onArena && (
+              <button
+                onClick={onArena}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-monad-600 hover:text-monad-700"
+              >
+                <span>Play your first duel in the Arena →</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="divide-y divide-border border-t border-border">
+            {matchHistory.slice(0, 8).map((duel) => {
+              const isWin = duel.outcome === "WIN";
+              const isLoss = duel.outcome === "LOSS";
+
+              return (
+                <div
+                  key={duel.id}
+                  className="py-3 flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <AssetLogo symbol={duel.asset as any} size={24} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-bold text-text-primary">
+                        <span>{duel.asset}/USD</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[10px] font-semibold ${
+                            duel.direction === "HIGHER"
+                              ? "bg-positive/10 text-positive"
+                              : "bg-negative/10 text-negative"
+                          }`}
+                        >
+                          {duel.direction}
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono text-text-tertiary">
+                        Strike: ${duel.strikePrice.toFixed(2)} → Final: ${duel.settledPrice.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div
+                      className={`font-mono font-bold text-sm ${
+                        isWin
+                          ? "text-positive"
+                          : isLoss
+                          ? "text-negative"
+                          : "text-text-secondary"
+                      }`}
+                    >
+                      {isWin
+                        ? `+${(duel.payout - duel.stake).toFixed(2)} MON`
+                        : isLoss
+                        ? `-${duel.stake.toFixed(2)} MON`
+                        : "DRAW"}
+                    </div>
+                    <div className="text-[10px] font-mono text-text-tertiary">
+                      {duel.eloDelta > 0 ? `+${duel.eloDelta}` : duel.eloDelta} ELO
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 };
