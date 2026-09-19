@@ -9,10 +9,13 @@ import { monadTestnet, DUEL_ARENA_CONTRACT_ADDRESS } from "./monadChain";
  * 3. Anti-abuse bounds (max testnet MON allowance, 15m session TTL, emergency revocation).
  */
 
-export const PRIVY_APP_ID =
-  process.env.NEXT_PUBLIC_PRIVY_APP_ID && process.env.NEXT_PUBLIC_PRIVY_APP_ID.length === 25
-    ? process.env.NEXT_PUBLIC_PRIVY_APP_ID
-    : "cl00000000000000000000000";
+export const PRIVY_APP_ID = (() => {
+  const envId = process.env.NEXT_PUBLIC_PRIVY_APP_ID?.trim();
+  if (envId && envId.length > 5 && envId !== "replace-with-privy-app-id") {
+    return envId;
+  }
+  return "cl00000000000000000000000";
+})();
 
 export interface SessionPolicy {
   chainId: number;

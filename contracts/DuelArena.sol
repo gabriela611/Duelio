@@ -7,11 +7,13 @@ import "./interfaces/IDuelArena.sol";
  * @title DuelArena
  * @notice Authoritative on-chain settlement and prediction contract for Duelio on Monad.
  * @dev Optimized for Monad EVM. Holds escrow stakes, enforces match lifecycle,
- * and distributes spectator prediction rewards deterministically.
+ * routes platform fees to the house treasury, and distributes spectator prediction rewards deterministically.
  */
 contract DuelArena is IDuelArena {
     uint256 public duelCounter;
     address public owner;
+    address public override treasury;
+    uint256 public override accumulatedFees;
     bool private locked;
 
     mapping(uint256 => Duel) public duels;
@@ -37,8 +39,36 @@ contract DuelArena is IDuelArena {
         _;
     }
 
-    constructor() {
+    constructor(address _initialTreasury) {
         owner = msg.sender;
+        treasury = _initialTreasury != address(0) ? _initialTreasury : msg.sender;
+    }
+
+    /**
+     * @notice Updates the House Treasury destination address.
+     * @param newTreasury The address of the new house wallet.
+     */
+    function setTreasury(address newTreasury) external override onlyOwner {
+        require(newTreasury != address(0), "INVALID_TREASURY");
+        treasury = newTreasury;
+        emit TreasuryUpdated(newTreasury);
+    }
+
+    /**
+     * @notice Allows protocol owner to sweep unforwarded accumulated fees to an authorized recipient.
+     * @param recipient The recipient address for the fee withdrawal.
+     */
+    function withdrawFees(address payable recipient) external override onlyOwner nonReentrant {
+        require(recipient != address(0), "INVALID_RECIPIENT");
+        uint256 amount = accumulatedFees;
+        require(amount > 0, "NO_FEES_TO_WITHDRAW");
+        require(address(this).balance >= amount, "INSUFFICIENT_BALANCE");
+
+        accumulatedFees = 0;
+        (bool success, ) = recipient.call{value: amount}("");
+        require(success, "FEE_WITHDRAW_FAILED");
+
+        emit FeesWithdrawn(recipient, amount);
     }
 
     /**
@@ -173,6 +203,11 @@ contract DuelArena is IDuelArena {
 
         require(mutualConsent || refereeAuthorized, "INVALID_SIGNATURES");
 
+        // Prevent premature outcome manipulation: match duration must expire unless authorized referee/owner intervenes
+        if (!refereeAuthorized) {
+            require(block.timestamp >= duel.endTime, "DUEL_NOT_FINISHED");
+        }
+
         duel.winner = winner;
         duel.finalStateHash = stateHash;
         duel.state = DuelState.COMMITTED;
@@ -203,7 +238,7 @@ contract DuelArena is IDuelArena {
     }
 
     /**
-     * @notice Winning trader claims their purse.
+     * @notice Winning trader claims their purse, routing protocol fees to the house treasury.
      * @param duelId ID of the duel.
      */
     function claimReward(uint256 duelId) external override nonReentrant {
@@ -221,11 +256,26 @@ contract DuelArena is IDuelArena {
         (bool success, ) = payable(duel.winner).call{value: payout}("");
         require(success, "TRANSFER_FAILED");
 
+        // Forward platform fee directly to the House Treasury wallet
+        if (protocolFee > 0) {
+            if (treasury != address(0)) {
+                (bool feeSuccess, ) = payable(treasury).call{value: protocolFee}("");
+                if (feeSuccess) {
+                    emit FeesDistributed(treasury, protocolFee);
+                } else {
+                    accumulatedFees += protocolFee;
+                }
+            } else {
+                accumulatedFees += protocolFee;
+            }
+        }
+
         emit RewardClaimed(duelId, msg.sender, payout);
     }
 
     /**
      * @notice Winning spectators claim their pro-rata prediction rewards.
+     * @dev If no spectator backed the winner, division-by-zero is avoided and original stakes are refunded.
      * @param duelId ID of the duel.
      */
     function claimPrediction(uint256 duelId) external override nonReentrant {
@@ -235,7 +285,6 @@ contract DuelArena is IDuelArena {
         Prediction storage userPred = predictions[duelId][msg.sender];
         require(userPred.amount > 0, "NO_PREDICTION");
         require(!userPred.claimed, "ALREADY_CLAIMED");
-        require(userPred.predictedWinner == duel.winner, "LOST_PREDICTION");
 
         userPred.claimed = true;
 
@@ -243,8 +292,15 @@ contract DuelArena is IDuelArena {
         uint256 losingPool = (duel.winner == duel.playerA) ? duel.totalPredictionPoolB : duel.totalPredictionPoolA;
         uint256 totalPool = winningPool + losingPool;
 
-        // Pro-rata distribution: (userStake / winningPool) * totalPool
-        uint256 payout = (userPred.amount * totalPool) / winningPool;
+        uint256 payout;
+        if (winningPool == 0) {
+            // Division by zero safeguard: If no spectator backed the winner, refund original stakes
+            payout = userPred.amount;
+        } else {
+            require(userPred.predictedWinner == duel.winner, "LOST_PREDICTION");
+            // Pro-rata distribution: (userStake / winningPool) * totalPool
+            payout = (userPred.amount * totalPool) / winningPool;
+        }
 
         (bool success, ) = payable(msg.sender).call{value: payout}("");
         require(success, "TRANSFER_FAILED");
@@ -253,19 +309,25 @@ contract DuelArena is IDuelArena {
     }
 
     /**
-     * @notice Cancels a created duel if no opponent joined within 1 hour.
+     * @notice Cancels a created or joined duel if participants abandon the match before start.
      * @param duelId ID of the duel.
      */
-    function cancelDuel(uint256 duelId) external nonReentrant {
+    function cancelDuel(uint256 duelId) external override nonReentrant {
         Duel storage duel = duels[duelId];
-        require(duel.state == DuelState.CREATED, "CANNOT_CANCEL");
-        require(msg.sender == duel.playerA || msg.sender == owner, "UNAUTHORIZED");
+        require(duel.state == DuelState.CREATED || duel.state == DuelState.JOINED, "CANNOT_CANCEL");
+        require(msg.sender == duel.playerA || msg.sender == duel.playerB || msg.sender == owner, "UNAUTHORIZED");
 
         duel.state = DuelState.CANCELLED;
-        (bool success, ) = payable(duel.playerA).call{value: duel.entryStake}("");
-        require(success, "REFUND_FAILED");
 
-        emit DuelCancelled(duelId, "Cancelled by creator");
+        (bool successA, ) = payable(duel.playerA).call{value: duel.entryStake}("");
+        require(successA, "REFUND_A_FAILED");
+
+        if (duel.playerB != address(0)) {
+            (bool successB, ) = payable(duel.playerB).call{value: duel.entryStake}("");
+            require(successB, "REFUND_B_FAILED");
+        }
+
+        emit DuelCancelled(duelId, "Cancelled by participant or owner");
     }
 
     function recoverSigner(bytes32 hash, bytes memory signature) internal pure returns (address) {

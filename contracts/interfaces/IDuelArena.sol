@@ -44,6 +44,9 @@ interface IDuelArena {
     event RewardClaimed(uint256 indexed duelId, address indexed claimant, uint256 amount);
     event PredictionClaimed(uint256 indexed duelId, address indexed predictor, uint256 payout);
     event DuelCancelled(uint256 indexed duelId, string reason);
+    event TreasuryUpdated(address indexed newTreasury);
+    event FeesDistributed(address indexed treasury, uint256 amount);
+    event FeesWithdrawn(address indexed recipient, uint256 amount);
 
     function createDuel(uint256 duration, bytes32 rulesHash) external payable returns (uint256 duelId);
     function joinDuel(uint256 duelId) external payable;
@@ -61,4 +64,9 @@ interface IDuelArena {
     function settleDuel(uint256 duelId) external;
     function claimReward(uint256 duelId) external;
     function claimPrediction(uint256 duelId) external;
+    function cancelDuel(uint256 duelId) external;
+    function setTreasury(address newTreasury) external;
+    function withdrawFees(address payable recipient) external;
+    function treasury() external view returns (address);
+    function accumulatedFees() external view returns (uint256);
 }

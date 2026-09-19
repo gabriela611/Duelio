@@ -1,143 +1,108 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import React, { useEffect, useState } from "react";
 import {
-  Trophy,
-  CheckCircle2,
   ChevronLeft,
   Flame,
+  CheckCircle2,
+  RefreshCw,
+  Trophy,
   Swords,
-  TrendingUp,
 } from "lucide-react";
 import { Trader } from "@/domain/trader/Trader";
-import {
-  fetchLeaderboard,
-} from "@/infrastructure/envio/client";
+import { fetchLeaderboard } from "@/infrastructure/envio/client";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
+import { normalizeAddress } from "@/domain/social/identity";
+import { getLocalTraders, getPlayerStats } from "@/domain/duel/duelHistory";
 
 interface LeaderboardViewProps {
+  userAddress?: string;
   onBack?: () => void;
 }
 
-export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
+export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ userAddress, onBack }) => {
   const [subTab, setSubTab] = useState<"global" | "rivals">("global");
   const [category, setCategory] = useState("All Duels");
   const [timeframe, setTimeframe] = useState("24h");
-  const [, setTraders] = useState<Trader[]>([]);
+  const [traders, setTraders] = useState<Trader[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const normalizedUser = normalizeAddress(userAddress);
+  const userStats = getPlayerStats(userAddress);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const remote = await fetchLeaderboard();
+      const local = getLocalTraders();
+
+      // Merge on-chain indexer records and local match records
+      const combinedMap = new Map<string, Trader>();
+      for (const t of remote) {
+        const addr = normalizeAddress(t.address) || t.address;
+        combinedMap.set(addr, t);
+      }
+      for (const t of local) {
+        const addr = normalizeAddress(t.address) || t.address;
+        const existing = combinedMap.get(addr);
+        if (!existing || t.elo >= existing.elo) {
+          combinedMap.set(addr, t);
+        }
+      }
+
+      const list = Array.from(combinedMap.values()).sort((a, b) => b.elo - a.elo);
+      setTraders(list);
+    } catch {
+      setTraders(getLocalTraders());
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadData() {
-      const list = await fetchLeaderboard();
-      setTraders(list);
-    }
     loadData();
-  }, []);
+  }, [userAddress]);
 
   const categories = [
     "All Duels",
+    "10s Speed Clash",
     "High Stakes",
-    "Speed Clash (1m)",
-    "Tactical (5m)",
     "Pro League",
   ];
   const timeframes = ["24h", "7d", "30d", "All"];
 
-  // Curated authentic Web3 PvP Duelists on Monad
-  const topDuelists = [
-    {
-      rank: 1,
-      name: "Alfa Jr",
-      handle: "$AlphaSignals",
-      elo: 1980,
-      winRate: "91.2%",
-      pnlMon: "+1,420.50",
-      pnlUsd: "≈ $26,989",
-      badges: ["MON", "BTC"],
-      avatar:
-        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&h=120&fit=crop&crop=face",
-      streak: 9,
-    },
-    {
-      rank: 2,
-      name: "Bubbles",
-      handle: "$Bubbles77",
-      elo: 1925,
-      winRate: "88.4%",
-      pnlMon: "+1,110.00",
-      pnlUsd: "≈ $21,090",
-      badges: ["SOL", "ETH"],
-      avatar:
-        "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=face",
-      streak: 6,
-    },
-    {
-      rank: 3,
-      name: "Jeni",
-      handle: "$MarketGuru",
-      elo: 1890,
-      winRate: "84.1%",
-      pnlMon: "+895.25",
-      pnlUsd: "≈ $17,009",
-      badges: ["MON", "ETH"],
-      avatar:
-        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&h=120&fit=crop&crop=face",
-      streak: 4,
-    },
-    {
-      rank: 4,
-      name: "Cold Nic",
-      handle: "$investorZZZ",
-      elo: 1860,
-      winRate: "81.0%",
-      pnlMon: "+660.00",
-      pnlUsd: "≈ $12,540",
-      badges: ["BTC", "SOL"],
-      avatar:
-        "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=face",
-      streak: 3,
-    },
-    {
-      rank: 5,
-      name: "MonadWhale (You)",
-      handle: "$monadwhale",
-      elo: 1845,
-      winRate: "82.9%",
-      pnlMon: "+452.80",
-      pnlUsd: "≈ $8,603",
-      badges: ["MON", "BTC", "ETH"],
-      avatar:
-        "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=120&h=120&fit=crop&crop=face",
-      streak: 5,
-    },
-  ];
+  // Find user's actual position in traders if recorded
+  const userTrader = traders.find(
+    (t) => normalizeAddress(t.address) === normalizedUser
+  );
+  const userRank = userTrader ? traders.indexOf(userTrader) + 1 : null;
 
   return (
-    <div className="max-w-4xl mx-auto w-full flex flex-col space-y-6">
-      {/* Top Bar: Back Button & Clean Tabs */}
+    <div className="max-w-4xl mx-auto w-full space-y-5 pb-8">
+      {/* Top Bar: Back Button & Textual Tabs with Thin Underline */}
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="p-2 -ml-2 text-text-secondary hover:text-text-primary active:scale-95 transition-[background-color,color,transform] duration-100 rounded-xl hover:bg-surface-secondary"
+          className="p-2 -ml-2 text-text-secondary hover:text-text-primary active:scale-95 transition-all rounded-xl hover:bg-surface-secondary"
           aria-label="Back to Arena"
         >
           <ChevronLeft className="w-5 h-5" />
         </button>
 
-        {/* Clean Underline Tabs */}
-        <div className="flex items-center gap-6">
+        {/* Textual Tabs with Underline per design.md Section 13 */}
+        <div className="flex items-center gap-8">
           <button
             onClick={() => setSubTab("global")}
             aria-pressed={subTab === "global"}
             className={`pb-2 text-sm font-semibold transition-colors relative ${
               subTab === "global"
-                ? "text-text-primary"
+                ? "text-text-primary font-bold"
                 : "text-text-secondary hover:text-text-primary"
             }`}
           >
             Global Arena
             {subTab === "global" && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-text-primary"></div>
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-monad-600 rounded-full" />
             )}
           </button>
 
@@ -146,188 +111,222 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onBack }) => {
             aria-pressed={subTab === "rivals"}
             className={`pb-2 text-sm font-semibold transition-colors relative ${
               subTab === "rivals"
-                ? "text-text-primary"
+                ? "text-text-primary font-bold"
                 : "text-text-secondary hover:text-text-primary"
             }`}
           >
-            Rivals (18)
+            Active Rivals
             {subTab === "rivals" && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-text-primary"></div>
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-monad-600 rounded-full" />
             )}
           </button>
         </div>
 
-        <div className="w-9"></div>
+        <button
+          onClick={loadData}
+          disabled={loading}
+          className="p-2 -mr-2 text-text-secondary hover:text-text-primary active:scale-95 transition-all rounded-xl hover:bg-surface-secondary disabled:opacity-40"
+          aria-label="Refresh rankings"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
-      {/* Your Rank Card */}
-      <div className="rounded-3xl bg-surface p-5 shadow-card border border-border flex flex-wrap items-center justify-between gap-4">
+      {/* Prominent Real Summary Card: Your Rank per design.md Section 3.1 */}
+      <section
+        className="rounded-3xl bg-surface p-5 sm:p-6 shadow-soft border border-border flex flex-wrap items-center justify-between gap-4"
+        aria-label="Your ranking summary"
+      >
         <div className="flex min-w-0 items-center gap-3.5">
-          <div className="w-14 h-14 shrink-0 rounded-xl overflow-hidden border border-border">
-            <img
-              src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=face"
-              width={56}
-              height={56}
-              alt="You"
-              className="w-full h-full object-cover"
-            />
+          <div className="w-12 h-12 shrink-0 rounded-2xl bg-surface-secondary border border-border flex items-center justify-center p-2 shadow-soft">
+            <AssetLogo symbol="MON" size={28} />
           </div>
 
           <div>
-            <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide block mb-1">
-              Your rank
+            <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+              {normalizedUser ? "Your Duelist Rank" : "Duelist Identity"}
             </span>
-            <div className="flex flex-wrap items-baseline gap-2">
-              <span className="font-mono font-bold text-2xl text-text-primary">
-                #302
+            <div className="flex flex-wrap items-baseline gap-2.5 mt-0.5">
+              <span className="font-mono font-bold text-2xl text-text-primary tabular-nums">
+                {userRank ? `#${userRank}` : normalizedUser ? (userStats.totalDuels > 0 ? "Ranked" : "Unranked") : "Guest Mode"}
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-monad-50 text-monad-700 text-xs font-semibold">
-                1845 ELO
+              <span className="px-2 py-0.5 rounded-full bg-surface-secondary text-text-primary text-xs font-semibold font-mono border border-border">
+                {normalizedUser ? `${userStats.elo} ELO` : "—"}
               </span>
             </div>
           </div>
         </div>
 
-        <div className="text-right">
-          <span className="text-base font-mono font-bold text-positive flex items-center justify-end gap-1">
+        <div className="text-left sm:text-right">
+          <span className="text-base font-mono font-bold text-positive flex items-center justify-start sm:justify-end gap-1">
             <AssetLogo symbol="MON" size={16} />
-            <span>+452.80 MON</span>
+            <span>+{userStats.totalMonWon.toFixed(2)} MON</span>
           </span>
           <span className="text-xs text-text-secondary font-medium block mt-0.5">
-            82.9% • 5x
+            {userStats.totalDuels > 0
+              ? `${(userStats.winRate * 100).toFixed(0)}% Win Rate (${userStats.wins}W · ${userStats.losses}L)`
+              : normalizedUser
+              ? "0 duels · Enter Arena to rank"
+              : "Connect wallet to join"}
           </span>
         </div>
-      </div>
+      </section>
 
-      {/* Category Filters */}
-      <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar p-1 -mx-1">
-        {categories.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => setCategory(cat)}
-            aria-pressed={category === cat}
-            className={`px-4 py-2 rounded-full text-xs font-semibold transition-[background-color,color,transform] duration-100 whitespace-nowrap active:scale-95 ${
-              category === cat
-                ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                : "bg-surface text-text-secondary border border-border hover:bg-surface-secondary"
-            }`}
-          >
-            {cat}
-          </button>
-        ))}
-      </div>
-
-      {/* Section Header with Timeframe */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <h3 className="text-lg font-bold text-text-primary tracking-tight">
-          Top Duelists
-        </h3>
-
-        {/* Timeframe selector */}
-        <div className="flex items-center bg-surface-secondary p-1 rounded-xl text-xs font-semibold">
-          {timeframes.map((tf) => (
+      {/* Category Filter Pills: design.md Section 14 */}
+      <div className="flex items-center space-x-2 overflow-x-auto no-scrollbar py-1 -mx-1 px-1">
+        {categories.map((cat) => {
+          const isActive = category === cat;
+          return (
             <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
-              aria-pressed={timeframe === tf}
-              className={`px-3 py-1 rounded-lg transition-[background-color,color,transform] active:scale-95 ${
-                timeframe === tf
-                  ? "bg-slate-200/90 text-text-primary border border-slate-300 font-bold shadow-xs"
-                  : "text-text-secondary hover:text-text-primary"
+              key={cat}
+              onClick={() => setCategory(cat)}
+              aria-pressed={isActive}
+              className={`h-8 sm:h-9 px-3.5 sm:px-4 rounded-full text-xs font-semibold transition-all duration-120 whitespace-nowrap active:scale-95 ${
+                isActive
+                  ? "bg-monad-600 text-white font-bold shadow-soft"
+                  : "bg-surface text-text-secondary border border-border hover:text-text-primary hover:bg-surface-secondary"
               }`}
             >
-              {tf}
+              {cat}
             </button>
-          ))}
+          );
+        })}
+      </div>
+
+      {/* Section Header with Segmented Timeframe Control: design.md Section 15 */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <h3 className="text-base sm:text-lg font-bold text-text-primary tracking-tight">
+          Duelist Leaderboard
+        </h3>
+
+        <div className="flex items-center bg-surface-secondary p-1 rounded-xl border border-border text-xs font-semibold">
+          {timeframes.map((tf) => {
+            const isSelected = timeframe === tf;
+            return (
+              <button
+                key={tf}
+                onClick={() => setTimeframe(tf)}
+                aria-pressed={isSelected}
+                className={`px-2.5 sm:px-3 py-1 rounded-lg transition-all duration-120 active:scale-95 text-[11px] sm:text-xs ${
+                  isSelected
+                    ? "bg-surface text-text-primary font-bold shadow-soft"
+                    : "text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                {tf}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Clean List Rows - No Card Wrappers */}
-      <div className="space-y-4">
-        {topDuelists.map((t) => (
-          <div
-            key={t.rank}
-            className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between py-3 border-b border-border"
-          >
-            {/* Left: Rank + Avatar + Info */}
-            <div className="flex min-w-0 items-center gap-3.5">
-              {/* Rank Badge */}
-              <div className="w-8 flex items-center justify-center shrink-0">
-                {t.rank === 1 ? (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-400 to-amber-300 flex items-center justify-center font-bold text-amber-900 text-xs shadow-2xs">
-                    1
-                  </div>
-                ) : t.rank === 2 ? (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-slate-300 to-slate-200 flex items-center justify-center font-bold text-slate-700 text-xs shadow-2xs">
-                    2
-                  </div>
-                ) : t.rank === 3 ? (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-600/20 to-amber-500/10 flex items-center justify-center font-bold text-amber-800 text-xs shadow-2xs">
-                    3
-                  </div>
-                ) : (
-                  <span className="text-sm font-mono font-bold text-text-tertiary">
-                    {t.rank}
-                  </span>
-                )}
-              </div>
-
-              {/* Avatar */}
-              <div className="relative shrink-0">
-                <img
-                  src={t.avatar}
-                  width={48}
-                  height={48}
-                  loading="lazy"
-                  alt={t.name}
-                  className="w-12 h-12 rounded-xl object-cover"
-                />
-                {t.streak >= 5 && (
-                  <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-monad-600 text-white flex items-center justify-center border-2 border-surface">
-                    <CheckCircle2 className="w-2.5 h-2.5" />
-                  </div>
-                )}
-              </div>
-
-              {/* Name & Metadata */}
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-text-primary flex items-center gap-2">
-                  <span className="truncate">{t.name}</span>
-                  {t.streak >= 5 && (
-                    <span className="flex shrink-0 items-center text-xs text-amber-500 font-semibold">
-                      <Flame className="w-3 h-3 fill-amber-400" />
-                      {t.streak}
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs font-mono text-text-secondary flex flex-wrap items-center gap-x-2 mt-0.5">
-                  <span>{t.handle}</span>
-                  <span>•</span>
-                  <span className="text-monad-600 font-semibold">{t.elo} ELO</span>
-                  <span>•</span>
-                  <div className="inline-flex items-center gap-1">
-                    {t.badges.map((badge) => (
-                      <AssetLogo key={badge} symbol={badge} size={14} />
-                    ))}
-                  </div>
-                </div>
-              </div>
+      {/* Clean List Rows — Living Directly on the Page Surface per design.md Section 3.1 & 17 */}
+      <div className="divide-y divide-border border-t border-b border-border">
+        {traders.length === 0 ? (
+          <div className="py-12 px-4 text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-surface-secondary border border-border flex items-center justify-center mx-auto text-text-tertiary">
+              <Trophy className="w-6 h-6" />
             </div>
-
-            {/* Right: PnL */}
-            <div className="flex items-center justify-between gap-2 pl-[7rem] sm:block sm:pl-0 sm:text-right shrink-0">
-              <div className="text-sm font-mono font-bold text-positive flex items-center gap-1 sm:justify-end">
-                <AssetLogo symbol="MON" size={14} />
-                <span>{t.pnlMon} MON</span>
-              </div>
-              <div className="text-xs font-medium text-text-tertiary mt-0.5">
-                {t.winRate}
-              </div>
-            </div>
+            <h4 className="text-sm font-bold text-text-primary">
+              No On-chain Rankings Yet
+            </h4>
+            <p className="text-xs text-text-secondary max-w-sm mx-auto leading-relaxed">
+              No duels have settled on Monad Testnet yet. Complete a 10-second clash in the Arena to claim the #1 spot on the leaderboard.
+            </p>
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold shadow-soft active:scale-95 transition-all"
+              >
+                <Swords className="w-3.5 h-3.5" />
+                <span>Enter Arena</span>
+              </button>
+            )}
           </div>
-        ))}
-      </div>
+        ) : (
+          traders.map((trader, idx) => {
+            const rank = idx + 1;
+            const isCurrentUser = normalizeAddress(trader.address) === normalizedUser;
 
+            return (
+              <div
+                key={trader.address}
+                className={`flex items-center justify-between py-3 px-2 sm:px-3 gap-3 transition-colors ${
+                  isCurrentUser ? "bg-monad-50/70 border border-monad-200/60 rounded-xl" : "hover:bg-surface/50"
+                }`}
+              >
+                {/* Left: [#] [avatar] Primary name & Secondary metadata (Single responsive row) */}
+                <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                  {/* Rank indicator */}
+                  <div className="w-6 text-center shrink-0 font-mono font-bold text-xs sm:text-sm text-text-tertiary">
+                    {rank === 1 ? (
+                      <span className="inline-flex w-5 h-5 sm:w-6 sm:h-6 items-center justify-center rounded-full bg-monad-600 text-white text-[11px] sm:text-xs font-bold">
+                        1
+                      </span>
+                    ) : rank === 2 ? (
+                      <span className="inline-flex w-5 h-5 sm:w-6 sm:h-6 items-center justify-center rounded-full bg-neutral-200 text-neutral-800 text-[11px] sm:text-xs font-bold">
+                        2
+                      </span>
+                    ) : rank === 3 ? (
+                      <span className="inline-flex w-5 h-5 sm:w-6 sm:h-6 items-center justify-center rounded-full bg-neutral-100 text-neutral-600 text-[11px] sm:text-xs font-bold border border-border">
+                        3
+                      </span>
+                    ) : (
+                      rank
+                    )}
+                  </div>
+
+                  {/* Square Avatar */}
+                  <div className="relative shrink-0">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-surface-secondary border border-border flex items-center justify-center font-bold font-mono text-xs text-text-primary">
+                      {(trader.handle || trader.address.slice(2, 4)).slice(0, 2).toUpperCase()}
+                    </div>
+                    {trader.winStreak >= 3 && (
+                      <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-positive text-white flex items-center justify-center border-2 border-surface">
+                        <CheckCircle2 className="w-2 h-2" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Primary name & Secondary metadata */}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs sm:text-sm font-semibold text-text-primary flex items-center gap-1.5 truncate">
+                      <span className="truncate">{trader.handle || `${trader.address.slice(0, 6)}…${trader.address.slice(-4)}`}</span>
+                      {isCurrentUser && (
+                        <span className="px-1.5 py-0.2 rounded bg-monad-100 text-[9px] font-bold text-monad-700 border border-monad-200 shrink-0">
+                          YOU
+                        </span>
+                      )}
+                      {trader.winStreak >= 3 && (
+                        <span className="inline-flex items-center text-[10px] text-amber-600 font-semibold gap-0.5 shrink-0">
+                          <Flame className="w-2.5 h-2.5 text-amber-500 fill-amber-500" />
+                          <span>{trader.winStreak}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-[11px] font-mono text-text-secondary flex items-center gap-1.5 mt-0.5 truncate">
+                      <span className="font-semibold text-text-primary">{trader.elo} ELO</span>
+                      <span>•</span>
+                      <span>{trader.wins}W / {trader.losses}L</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right: Green Financial Value Aligned Right per design.md Section 3.1 */}
+                <div className="text-right shrink-0">
+                  <div className="text-xs sm:text-sm font-mono font-bold text-positive tabular-nums">
+                    +{Number(trader.totalMonWon).toFixed(2)} MON
+                  </div>
+                  <div className="text-[10px] sm:text-xs font-medium text-text-tertiary mt-0.5">
+                    {(trader.winRate * 100).toFixed(0)}% win rate
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 };
