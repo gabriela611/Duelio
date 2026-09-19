@@ -74,13 +74,13 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
   };
 
   const balanceFormatted =
-    nativeBalance.status === "ready" && nativeBalance.value !== undefined
+    targetAddress && nativeBalance.status === "ready" && nativeBalance.value !== undefined
       ? formatNativeBalance(nativeBalance.value)
-      : nativeBalance.status === "loading"
+      : targetAddress && nativeBalance.status === "loading"
       ? "Checking…"
-      : nativeBalance.status === "error"
+      : targetAddress && nativeBalance.status === "error"
       ? "Unavailable"
-      : "0.00";
+      : null;
 
   return (
     <div className="max-w-4xl mx-auto w-full space-y-6 pb-8">
@@ -320,14 +320,22 @@ export const ProfileBadge: React.FC<ProfileBadgeProps> = ({
             <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
               Available Native Balance
             </span>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-3xl font-mono font-bold text-text-primary tracking-tight">
-                {balanceFormatted}
-              </span>
-              <span className="text-lg font-bold text-text-tertiary font-mono">
-                MON
-              </span>
-            </div>
+            {targetAddress && balanceFormatted !== null ? (
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-3xl font-mono font-bold text-text-primary tracking-tight">
+                  {balanceFormatted}
+                </span>
+                <span className="text-lg font-bold text-text-tertiary font-mono">
+                  MON
+                </span>
+              </div>
+            ) : (
+              <div className="mt-1.5">
+                <span className="text-sm font-semibold text-text-secondary">
+                  Connect wallet to view live on-chain balance
+                </span>
+              </div>
+            )}
             <p className="mt-1.5 text-xs text-text-secondary">
               Verified live on-chain against RPC https://testnet-rpc.monad.xyz
             </p>

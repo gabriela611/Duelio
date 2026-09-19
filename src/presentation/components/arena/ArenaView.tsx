@@ -87,7 +87,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
       ? "Checking…"
       : isWalletConnected && nativeBalance.status === "error"
       ? "Unavailable"
-      : "0.00";
+      : null;
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -305,14 +305,25 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 text-left sm:text-right">
-            <div>
-              <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
-                Monad Balance
-              </span>
-              <span className="text-lg font-bold font-mono text-text-primary tabular-nums">
-                {displayBalance} MON
-              </span>
-            </div>
+            {isWalletConnected ? (
+              <div>
+                <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+                  Monad Balance
+                </span>
+                <span className="text-lg font-bold font-mono text-text-primary tabular-nums">
+                  {displayBalance} MON
+                </span>
+              </div>
+            ) : (
+              <div>
+                <span className="text-[11px] font-semibold text-text-tertiary uppercase tracking-wider block">
+                  Wallet Status
+                </span>
+                <span className="text-sm font-semibold text-text-secondary">
+                  Not Connected
+                </span>
+              </div>
+            )}
             {isWalletConnected && (
               <button
                 onClick={nativeBalance.refresh}

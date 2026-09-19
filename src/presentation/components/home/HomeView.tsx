@@ -173,38 +173,48 @@ export function HomeView({
             <span>Monad Account</span>
           </div>
           <div className="flex items-center gap-1">
-            {userAddress && (
-              <button
-                onClick={balance.refresh}
-                disabled={balance.status === "loading"}
-                aria-label="Refresh balance"
-                className="w-9 h-9 flex items-center justify-center rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-secondary active:scale-95 transition-all disabled:opacity-40"
-              >
-                <RefreshCw size={16} className={balance.status === "loading" ? "animate-spin" : ""} />
-              </button>
+            {authenticated && userAddress && (
+              <>
+                <button
+                  onClick={balance.refresh}
+                  disabled={balance.status === "loading"}
+                  aria-label="Refresh balance"
+                  className="w-9 h-9 flex items-center justify-center rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-secondary active:scale-95 transition-all disabled:opacity-40"
+                >
+                  <RefreshCw size={16} className={balance.status === "loading" ? "animate-spin" : ""} />
+                </button>
+                <button
+                  onClick={() => setHidden(!hidden)}
+                  aria-label={hidden ? "Show balance" : "Hide balance"}
+                  aria-pressed={hidden}
+                  className="w-9 h-9 flex items-center justify-center rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-secondary active:scale-95 transition-all"
+                >
+                  {hidden ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </>
             )}
-            <button
-              onClick={() => setHidden(!hidden)}
-              aria-label={hidden ? "Show balance" : "Hide balance"}
-              aria-pressed={hidden}
-              className="w-9 h-9 flex items-center justify-center rounded-xl text-text-secondary hover:text-text-primary hover:bg-surface-secondary active:scale-95 transition-all"
-            >
-              {hidden ? <EyeOff size={17} /> : <Eye size={17} />}
-            </button>
           </div>
         </div>
 
         <div>
-          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1" aria-live="polite" aria-atomic="true">
-            <span className="balance-amount text-text-primary font-bold tracking-tight">
-              {hidden
-                ? "••••"
-                : balance.status === "ready" && balance.value !== undefined
-                ? formatNativeBalance(balance.value)
-                : "0.00"}
-            </span>
-            <span className="text-xl sm:text-2xl font-bold text-text-tertiary font-mono">MON</span>
-          </div>
+          {authenticated && userAddress ? (
+            <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1" aria-live="polite" aria-atomic="true">
+              <span className="balance-amount text-text-primary font-bold tracking-tight">
+                {hidden
+                  ? "••••"
+                  : balance.status === "ready" && balance.value !== undefined
+                  ? formatNativeBalance(balance.value)
+                  : "—"}
+              </span>
+              <span className="text-xl sm:text-2xl font-bold text-text-tertiary font-mono">MON</span>
+            </div>
+          ) : (
+            <div className="py-1">
+              <span className="text-xl sm:text-2xl font-bold text-text-primary tracking-tight block">
+                Session Not Started
+              </span>
+            </div>
+          )}
           <p className="mt-2 text-sm text-text-secondary font-medium" role="status">
             {balanceLabel}
           </p>
