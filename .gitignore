@@ -41,6 +41,8 @@ Thumbs.db
 
 # Local agent and workspace metadata
 .agents/
+agent/
+skills-lock.json
 .atl/
 .codex/
 .claude/
