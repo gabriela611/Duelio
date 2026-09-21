@@ -24,6 +24,7 @@ import { SupportedAsset, usePriceStream } from "@/infrastructure/price-feed/useP
 import { getPriceSourceLabel } from "@/infrastructure/price-feed/priceSource";
 import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
 import { formatNativeBalance } from "@/domain/social/identity";
+import { recordDuel } from "@/domain/duel/duelHistory";
 import { useDuelWalletClient } from "@/presentation/hooks/useDuelWalletClient";
 import {
   createDuelOnChain,
@@ -426,6 +427,30 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, in
         setMatchWinner("OPPONENT");
         setTxMessage("Match settled. Opponent claimed the purse.");
       }
+
+      // Record verified on-chain duel result into persistent history
+      const outcomeVal = declaredWinner.toLowerCase() === userAddress.toLowerCase()
+        ? "WIN"
+        : declaredWinner === "0x0000000000000000000000000000000000000000"
+        ? "DRAW"
+        : "LOSS";
+      const stakeNum = Number(activeDuel.entryStakeMon);
+      const payoutNum = outcomeVal === "WIN" ? Number((stakeNum * 1.96).toFixed(4)) : outcomeVal === "DRAW" ? stakeNum : 0;
+      const eloDelta = outcomeVal === "WIN" ? 16 : outcomeVal === "LOSS" ? -16 : 0;
+
+      recordDuel({
+        playerAddress: userAddress,
+        asset: selectedAsset,
+        strikePrice,
+        settledPrice: currentPrice,
+        direction: initialDirection,
+        outcome: outcomeVal,
+        stake: stakeNum,
+        payout: payoutNum,
+        eloDelta,
+        mode: "onchain",
+        onChainDuelId: activeDuel.id.toString(),
+      });
 
       const updated = await fetchDuelDetails(activeDuel.id);
       if (updated) {

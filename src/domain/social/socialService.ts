@@ -34,11 +34,6 @@ export interface SocialPost {
   isLiveChallenge?: boolean;
 }
 
-const STORAGE_KEY_USER_POSTS = "duelio_user_challenges_v1";
-const STORAGE_KEY_LIKES = "duelio_social_likes_v1";
-const STORAGE_KEY_REPOSTS = "duelio_social_reposts_v1";
-const STORAGE_KEY_FOLLOWS = "duelio_social_follows_v1";
-
 // Realistic arena challenge seeds on Monad Testnet without fabricated financial payouts
 const COMMUNITY_SEEDS: SocialPost[] = [
   {
@@ -51,7 +46,7 @@ const COMMUNITY_SEEDS: SocialPost[] = [
     title: "Who can predict BTC in 30s?",
     description: "Looking for a rival in the 30-second arena. 0.1 MON stake ready on Monad Testnet. $BTC looking volatile!",
     content: "Looking for a rival in the 30-second arena. 0.1 MON stake ready on Monad Testnet. $BTC looking volatile!",
-    timestamp: Date.now() - 1000 * 60 * 18,
+    timestamp: 1774180000000,
     stakeMon: 0.1,
     asset: "BTC",
     reactionsCount: 14,
@@ -65,7 +60,7 @@ const COMMUNITY_SEEDS: SocialPost[] = [
         authorName: "MonadMaster",
         authorInitials: "MM",
         content: "Accepted! Let's see your prediction reflexes on $BTC.",
-        timestamp: Date.now() - 1000 * 60 * 10,
+        timestamp: 1774180400000,
       },
     ],
     isLiveChallenge: true,
@@ -80,7 +75,7 @@ const COMMUNITY_SEEDS: SocialPost[] = [
     title: "ETH Speed Clash Challenge",
     description: "Ready for two-wallet on-chain duels with Pyth oracle settlement. Challenge open on $ETH.",
     content: "Ready for two-wallet on-chain duels with Pyth oracle settlement. Challenge open on $ETH.",
-    timestamp: Date.now() - 1000 * 60 * 60,
+    timestamp: 1774176400000,
     stakeMon: 0.25,
     asset: "ETH",
     reactionsCount: 8,
@@ -100,7 +95,7 @@ const COMMUNITY_SEEDS: SocialPost[] = [
     title: "Monad sub-second finality is unmatched",
     description: "Testing $MON execution speed against Pyth oracle ticks in Duelio. 10,000 TPS makes on-chain PvP trading feel like Web2.",
     content: "Testing $MON execution speed against Pyth oracle ticks in Duelio. 10,000 TPS makes on-chain PvP trading feel like Web2.",
-    timestamp: Date.now() - 1000 * 60 * 150,
+    timestamp: 1774170000000,
     reactionsCount: 23,
     likesCount: 23,
     repostsCount: 6,
@@ -109,18 +104,14 @@ const COMMUNITY_SEEDS: SocialPost[] = [
   },
 ];
 
-export function getSocialFeed(): SocialPost[] {
-  const customPosts: SocialPost[] = [];
-  if (typeof window !== "undefined") {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY_USER_POSTS);
-      if (raw) customPosts.push(...JSON.parse(raw));
-    } catch {
-      // Ignore parsing errors
-    }
-  }
+// Client-side in-memory cache — ZERO localStorage dependency
+let clientPosts: SocialPost[] = [];
+const clientLikes = new Map<string, Set<string>>(); // account -> Set<postId>
+const clientReposts = new Map<string, Set<string>>(); // account -> Set<postId>
+const clientFollows = new Map<string, Set<string>>(); // viewer -> Set<target>
 
-  // Convert real duel records into feed events
+export function getSocialFeed(): SocialPost[] {
+  // Convert real on-chain duel records into feed events
   const duels = getDuelHistory();
   const duelPosts: SocialPost[] = duels.map((d: DuelRecord) => {
     const isWin = d.outcome === "WIN";
@@ -138,7 +129,7 @@ export function getSocialFeed(): SocialPost[] {
       timestamp: d.timestamp,
       stakeMon: d.stake,
       asset: d.asset,
-      duelId: d.id,
+      duelId: d.onChainDuelId || d.id,
       reactionsCount: isWin ? 5 : 1,
       likesCount: isWin ? 5 : 1,
       repostsCount: 0,
@@ -147,104 +138,113 @@ export function getSocialFeed(): SocialPost[] {
     };
   });
 
-  const all = [...customPosts, ...duelPosts, ...COMMUNITY_SEEDS];
-  return all.sort((a, b) => b.timestamp - a.timestamp);
+  const all = [...clientPosts, ...duelPosts, ...COMMUNITY_SEEDS];
+  const unique = new Map<string, SocialPost>();
+  for (const post of all) {
+    if (!unique.has(post.id)) {
+      unique.set(post.id, post);
+    }
+  }
+
+  return Array.from(unique.values()).sort((a, b) => b.timestamp - a.timestamp);
 }
 
+/**
+ * Fetches durable server feed without touching localStorage
+ */
 export async function fetchSocialFeed(viewerAddress?: string): Promise<SocialPost[]> {
-  const localFeed = getSocialFeed();
-  if (typeof window === "undefined") return localFeed;
+  if (typeof window === "undefined") {
+    return getSocialFeed();
+  }
 
   try {
     const url = viewerAddress
       ? `/api/social/feed?viewerAddress=${encodeURIComponent(viewerAddress)}`
       : "/api/social/feed";
     const res = await fetch(url);
-    if (!res.ok) return localFeed;
+    if (!res.ok) return getSocialFeed();
 
     const data = await res.json();
-    if (!data.success || !Array.isArray(data.feed)) return localFeed;
+    if (data.success && Array.isArray(data.feed)) {
+      const serverPosts: SocialPost[] = data.feed.map((item: any) => ({
+        id: item.id,
+        authorAddress: item.authorAddress,
+        authorName: item.authorName || `${item.authorAddress.slice(0, 6)}…${item.authorAddress.slice(-4)}`,
+        authorInitials: item.authorInitials || item.authorAddress.slice(2, 4).toUpperCase(),
+        kind: item.kind || "challenges",
+        eyebrow: item.eyebrow || "Arena Challenge",
+        title: item.title,
+        description: item.description,
+        content: item.content || item.description,
+        timestamp: item.timestamp,
+        stakeMon: item.stakeMon,
+        asset: item.asset,
+        duelId: item.duelId,
+        reactionsCount: item.reactionsCount ?? item.likesCount ?? 0,
+        likesCount: item.likesCount ?? item.reactionsCount ?? 0,
+        isLiked: Boolean(item.isLiked),
+        repostsCount: item.repostsCount ?? 0,
+        isReposted: Boolean(item.isReposted),
+        repliesCount: item.repliesCount ?? (item.replies ? item.replies.length : 0),
+        replies: item.replies || [],
+        isLiveChallenge: Boolean(item.isLiveChallenge || item.stakeMon),
+      }));
 
-    const serverPosts: SocialPost[] = data.feed.map((ch: any) => ({
-      id: ch.id,
-      authorAddress: ch.authorAddress,
-      authorName: ch.authorName,
-      authorInitials: ch.authorInitials || "DU",
-      kind: ch.kind || "challenges",
-      eyebrow: ch.eyebrow || `${ch.asset || "BTC"} Duel Challenge`,
-      title: ch.title,
-      description: ch.description,
-      content: ch.content || ch.description,
-      timestamp: ch.timestamp || Date.now(),
-      stakeMon: ch.stakeMon,
-      asset: ch.asset,
-      duelId: ch.duelId,
-      reactionsCount: ch.reactionsCount || ch.likesCount || 0,
-      likesCount: ch.likesCount || ch.reactionsCount || 0,
-      isLiked: Boolean(ch.isLiked),
-      repostsCount: ch.repostsCount || 0,
-      isReposted: Boolean(ch.isReposted),
-      repliesCount: ch.repliesCount || (ch.replies ? ch.replies.length : 0),
-      replies: ch.replies || [],
-      isLiveChallenge: ch.isLiveChallenge !== false,
-    }));
+      // Update in-memory cache
+      clientPosts = serverPosts;
 
-    // Convert real duel records into feed events
-    const duels = getDuelHistory();
-    const duelPosts: SocialPost[] = duels.map((d: DuelRecord) => {
-      const isWin = d.outcome === "WIN";
-      const short = `${d.playerAddress.slice(0, 6)}…${d.playerAddress.slice(-4)}`;
-      return {
-        id: `feed_duel_${d.id}`,
-        authorAddress: d.playerAddress,
-        authorName: short,
-        authorInitials: d.playerAddress.slice(2, 4).toUpperCase(),
-        kind: "duels" as const,
-        eyebrow: `${d.asset}/USD 10s Clash`,
-        title: isWin ? `Victory: +${(d.payout - d.stake).toFixed(2)} MON` : `Settled: ${d.outcome}`,
-        description: `Predicted ${d.direction} at $${d.strikePrice.toFixed(2)} (Settled: $${d.settledPrice.toFixed(2)}). Stake: ${d.stake} MON.`,
-        content: `Predicted ${d.direction} on $${d.asset} at $${d.strikePrice.toFixed(2)}. Settled at $${d.settledPrice.toFixed(2)}.`,
-        timestamp: d.timestamp,
-        stakeMon: d.stake,
-        asset: d.asset,
-        duelId: d.id,
-        reactionsCount: isWin ? 5 : 1,
-        likesCount: isWin ? 5 : 1,
-        repostsCount: 0,
-        repliesCount: 0,
-        replies: [],
-      };
-    });
+      // Also incorporate any local duel records
+      const duels = getDuelHistory();
+      const duelPosts: SocialPost[] = duels.map((d: DuelRecord) => {
+        const isWin = d.outcome === "WIN";
+        const short = `${d.playerAddress.slice(0, 6)}…${d.playerAddress.slice(-4)}`;
+        return {
+          id: `feed_duel_${d.id}`,
+          authorAddress: d.playerAddress,
+          authorName: short,
+          authorInitials: d.playerAddress.slice(2, 4).toUpperCase(),
+          kind: "duels" as const,
+          eyebrow: `${d.asset}/USD 10s Clash`,
+          title: isWin ? `Victory: +${(d.payout - d.stake).toFixed(2)} MON` : `Settled: ${d.outcome}`,
+          description: `Predicted ${d.direction} at $${d.strikePrice.toFixed(2)} (Settled: $${d.settledPrice.toFixed(2)}). Stake: ${d.stake} MON.`,
+          content: `Predicted ${d.direction} on $${d.asset} at $${d.strikePrice.toFixed(2)}. Settled at $${d.settledPrice.toFixed(2)}.`,
+          timestamp: d.timestamp,
+          stakeMon: d.stake,
+          asset: d.asset,
+          duelId: d.onChainDuelId || d.id,
+          reactionsCount: isWin ? 5 : 1,
+          likesCount: isWin ? 5 : 1,
+          repostsCount: 0,
+          repliesCount: 0,
+          replies: [],
+        };
+      });
 
-    const combined = [...serverPosts, ...duelPosts];
-    // Deduplicate by ID
-    const seen = new Set<string>();
-    const deduped: SocialPost[] = [];
-    for (const post of combined) {
-      if (!seen.has(post.id)) {
-        seen.add(post.id);
-        deduped.push(post);
+      const merged = [...serverPosts, ...duelPosts];
+      const unique = new Map<string, SocialPost>();
+      for (const p of merged) {
+        if (!unique.has(p.id)) unique.set(p.id, p);
       }
+      return Array.from(unique.values()).sort((a, b) => b.timestamp - a.timestamp);
     }
-
-    return deduped.sort((a, b) => b.timestamp - a.timestamp);
   } catch (err) {
-    console.warn("fetchSocialFeed network error, using local feed:", err);
-    return localFeed;
+    console.warn("Failed to fetch server social feed:", err);
   }
+
+  return getSocialFeed();
 }
 
-export function publishChallenge(
+export function postChallenge(
   authorAddress: string,
   title: string,
   description: string,
-  asset: string = "BTC",
-  stakeMon: number = 0.5,
+  asset: string,
+  stakeMon: number,
   duelId?: string
 ): SocialPost {
   const norm = normalizeAddress(authorAddress) || authorAddress;
   const newPost: SocialPost = {
-    id: `challenge_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: `tweet_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     authorAddress: norm,
     authorName: `${norm.slice(0, 6)}…${norm.slice(-4)}`,
     authorInitials: norm.slice(2, 4).toUpperCase(),
@@ -252,24 +252,22 @@ export function publishChallenge(
     eyebrow: `${asset} 10s Duel Challenge`,
     title,
     description,
+    content: description,
     timestamp: Date.now(),
     stakeMon,
     asset,
     duelId,
     reactionsCount: 0,
+    likesCount: 0,
+    repostsCount: 0,
+    repliesCount: 0,
+    replies: [],
     isLiveChallenge: true,
   };
 
-  if (typeof window !== "undefined") {
-    try {
-      const existing = localStorage.getItem(STORAGE_KEY_USER_POSTS);
-      const posts: SocialPost[] = existing ? JSON.parse(existing) : [];
-      localStorage.setItem(STORAGE_KEY_USER_POSTS, JSON.stringify([newPost, ...posts]));
-    } catch {
-      // Storage restricted
-    }
+  clientPosts.unshift(newPost);
 
-    // Fire asynchronous background persist to server
+  if (typeof window !== "undefined") {
     fetch("/api/social/feed", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -277,9 +275,11 @@ export function publishChallenge(
         authorAddress: norm,
         title,
         description,
+        content: description,
         asset,
         stakeMon,
         duelId,
+        kind: "challenges",
       }),
     }).catch((err) => console.warn("Failed to persist challenge to server:", err));
   }
@@ -288,31 +288,27 @@ export function publishChallenge(
 }
 
 export function getLikedPostIds(userAddress?: string): string[] {
-  if (typeof window === "undefined") return [];
   const account = normalizeAddress(userAddress) || "guest";
-  try {
-    const raw = localStorage.getItem(`${STORAGE_KEY_LIKES}_${account}`);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  const likesSet = clientLikes.get(account);
+  return likesSet ? Array.from(likesSet) : [];
 }
 
 export function toggleLike(postId: string, userAddress?: string): boolean {
-  if (typeof window === "undefined") return false;
   const account = normalizeAddress(userAddress) || "guest";
-  const current = getLikedPostIds(userAddress);
-  const isLiked = current.includes(postId);
-  const updated = isLiked ? current.filter((id) => id !== postId) : [...current, postId];
-
-  try {
-    localStorage.setItem(`${STORAGE_KEY_LIKES}_${account}`, JSON.stringify(updated));
-  } catch {
-    // Storage restricted
+  let likesSet = clientLikes.get(account);
+  if (!likesSet) {
+    likesSet = new Set<string>();
+    clientLikes.set(account, likesSet);
   }
 
-  // Persist to server if wallet address exists
-  if (userAddress) {
+  const isLiked = likesSet.has(postId);
+  if (isLiked) {
+    likesSet.delete(postId);
+  } else {
+    likesSet.add(postId);
+  }
+
+  if (typeof window !== "undefined" && userAddress) {
     fetch("/api/social/reactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -324,14 +320,9 @@ export function toggleLike(postId: string, userAddress?: string): boolean {
 }
 
 export function getFollowingList(viewerAddress?: string): string[] {
-  if (typeof window === "undefined") return [];
   const account = normalizeAddress(viewerAddress) || "guest";
-  try {
-    const raw = localStorage.getItem(`${STORAGE_KEY_FOLLOWS}_${account}`);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  const followsSet = clientFollows.get(account);
+  return followsSet ? Array.from(followsSet) : [];
 }
 
 export async function fetchFollowingList(viewerAddress?: string): Promise<string[]> {
@@ -343,10 +334,9 @@ export async function fetchFollowingList(viewerAddress?: string): Promise<string
     if (!res.ok) return localList;
     const data = await res.json();
     if (data.success && Array.isArray(data.following)) {
-      const merged = Array.from(new Set([...localList, ...data.following]));
-      const account = normalizeAddress(viewerAddress) || "guest";
-      localStorage.setItem(`${STORAGE_KEY_FOLLOWS}_${account}`, JSON.stringify(merged));
-      return merged;
+      const account = normalizeAddress(viewerAddress)!;
+      clientFollows.set(account, new Set(data.following));
+      return data.following;
     }
     return localList;
   } catch {
@@ -355,54 +345,56 @@ export async function fetchFollowingList(viewerAddress?: string): Promise<string
 }
 
 export function toggleFollowUser(viewerAddress?: string, targetAddress?: string): boolean {
-  if (typeof window === "undefined" || !canFollow(viewerAddress, targetAddress)) return false;
+  if (!canFollow(viewerAddress, targetAddress)) return false;
   const viewer = normalizeAddress(viewerAddress)!;
   const target = normalizeAddress(targetAddress)!;
 
-  const current = getFollowingList(viewer);
-  const isFollowing = current.includes(target);
-  const updated = isFollowing ? current.filter((addr) => addr !== target) : [...current, target];
-
-  try {
-    localStorage.setItem(`${STORAGE_KEY_FOLLOWS}_${viewer}`, JSON.stringify(updated));
-  } catch {
-    // Storage restricted
+  let followsSet = clientFollows.get(viewer);
+  if (!followsSet) {
+    followsSet = new Set<string>();
+    clientFollows.set(viewer, followsSet);
   }
 
-  fetch("/api/social/follow", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ viewerAddress: viewer, targetAddress: target }),
-  }).catch((err) => console.warn("Failed to sync follow to server:", err));
+  const isFollowing = followsSet.has(target);
+  if (isFollowing) {
+    followsSet.delete(target);
+  } else {
+    followsSet.add(target);
+  }
+
+  if (typeof window !== "undefined") {
+    fetch("/api/social/follow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ viewerAddress: viewer, targetAddress: target }),
+    }).catch((err) => console.warn("Failed to sync follow to server:", err));
+  }
 
   return !isFollowing;
 }
 
 export function getRepostedPostIds(userAddress?: string): string[] {
-  if (typeof window === "undefined") return [];
   const account = normalizeAddress(userAddress) || "guest";
-  try {
-    const raw = localStorage.getItem(`${STORAGE_KEY_REPOSTS}_${account}`);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  const repostsSet = clientReposts.get(account);
+  return repostsSet ? Array.from(repostsSet) : [];
 }
 
 export function toggleRepost(postId: string, userAddress?: string): boolean {
-  if (typeof window === "undefined") return false;
   const account = normalizeAddress(userAddress) || "guest";
-  const current = getRepostedPostIds(userAddress);
-  const isReposted = current.includes(postId);
-  const updated = isReposted ? current.filter((id) => id !== postId) : [...current, postId];
-
-  try {
-    localStorage.setItem(`${STORAGE_KEY_REPOSTS}_${account}`, JSON.stringify(updated));
-  } catch {
-    // Storage restricted
+  let repostsSet = clientReposts.get(account);
+  if (!repostsSet) {
+    repostsSet = new Set<string>();
+    clientReposts.set(account, repostsSet);
   }
 
-  if (userAddress) {
+  const isReposted = repostsSet.has(postId);
+  if (isReposted) {
+    repostsSet.delete(postId);
+  } else {
+    repostsSet.add(postId);
+  }
+
+  if (typeof window !== "undefined" && userAddress) {
     fetch("/api/social/repost", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -445,15 +437,9 @@ export async function postTweet(
     isLiveChallenge: isChallenge,
   };
 
-  if (typeof window !== "undefined") {
-    try {
-      const existing = localStorage.getItem(STORAGE_KEY_USER_POSTS);
-      const posts: SocialPost[] = existing ? JSON.parse(existing) : [];
-      localStorage.setItem(STORAGE_KEY_USER_POSTS, JSON.stringify([localPost, ...posts]));
-    } catch {
-      // Storage restricted
-    }
+  clientPosts.unshift(localPost);
 
+  if (typeof window !== "undefined") {
     try {
       const res = await fetch("/api/social/feed", {
         method: "POST",
@@ -480,7 +466,7 @@ export async function postTweet(
         }
       }
     } catch (err) {
-      console.warn("Failed to persist tweet to server, using local copy:", err);
+      console.warn("Failed to persist tweet to server:", err);
     }
   }
 
@@ -526,3 +512,5 @@ export async function postReply(
 
   return reply;
 }
+
+export const publishChallenge = postChallenge;

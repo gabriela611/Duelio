@@ -187,3 +187,65 @@ test("social store tracks Twitter-style reposts / retweets per account", async (
   assert.equal(unRepost.isReposted, false);
   assert.equal(unRepost.count, 0);
 });
+
+test("socialStore validates EVM address format and rejects invalid authors", async () => {
+  const { saveChallenge, addTweetReply } = await import("../src/infrastructure/social/socialStore.ts");
+
+  // Invalid addresses must throw validation errors
+  assert.throws(
+    () => saveChallenge({ authorAddress: "not-an-address", title: "Test", description: "Test" }),
+    /INVALID_AUTHOR_ADDRESS/
+  );
+
+  assert.throws(
+    () => addTweetReply("genesis-challenge-1", { authorAddress: "0x123", content: "Invalid author" }),
+    /INVALID_REPLY_AUTHOR/
+  );
+});
+
+test("socialStore rejects malformed duelId on challenge creation", async () => {
+  const { saveChallenge } = await import("../src/infrastructure/social/socialStore.ts");
+
+  assert.throws(
+    () => saveChallenge({
+      authorAddress: viewer,
+      title: "Malicious Duel ID",
+      description: "Trying sql injection or invalid id",
+      duelId: "not-a-number-123abc",
+    }),
+    /INVALID_DUEL_ID/
+  );
+
+  // Valid numeric onchain ID must succeed
+  const valid = saveChallenge({
+    authorAddress: viewer,
+    title: "Valid Duel ID Challenge",
+    description: "Challenge with real onchain duel ID 101",
+    duelId: "101",
+  });
+  assert.equal(valid.duelId, "101");
+});
+
+test("socialStore persists on-chain duel records without client localStorage", async () => {
+  const { saveServerDuelRecord, getServerDuelHistory } = await import("../src/infrastructure/social/socialStore.ts");
+
+  const duel = saveServerDuelRecord({
+    playerAddress: viewer,
+    asset: "BTC",
+    strikePrice: 96000,
+    settledPrice: 96500,
+    direction: "HIGHER",
+    outcome: "WIN",
+    stake: 0.5,
+    payout: 0.98,
+    eloDelta: 16,
+    mode: "onchain",
+    onChainDuelId: "1",
+  });
+
+  assert.equal(duel.playerAddress, viewer.toLowerCase());
+  assert.equal(duel.onChainDuelId, "1");
+
+  const history = getServerDuelHistory(viewer, "onchain");
+  assert.ok(history.some((d) => d.id === duel.id && d.onChainDuelId === "1"));
+});

@@ -16,6 +16,7 @@ export interface DuelRecord {
   payout: number;
   eloDelta: number;
   mode: DuelMode;
+  onChainDuelId?: string;
 }
 
 export interface PlayerStats {
@@ -31,60 +32,74 @@ export interface PlayerStats {
   winRate: number;
 }
 
-const STORAGE_KEY_DUELS = "duelio_duel_records_v1";
-
-type StoredDuelRecord = Omit<DuelRecord, "mode"> & { mode?: DuelMode };
-
-function readStoredDuelHistory(): StoredDuelRecord[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_DUELS);
-    if (!raw) return [];
-    return JSON.parse(raw) as StoredDuelRecord[];
-  } catch {
-    return [];
-  }
-}
-
-function recordMode(record: StoredDuelRecord): DuelMode {
-  // Records created before mode separation came from the local practice arena.
-  return record.mode === "onchain" ? "onchain" : "practice";
-}
+// In-memory client cache — zero localStorage dependency
+let clientDuelHistory: DuelRecord[] = [];
 
 export function getDuelHistory(
   playerAddress?: string,
   mode: DuelMode = "onchain"
 ): DuelRecord[] {
   const target = normalizeAddress(playerAddress);
-  return readStoredDuelHistory()
-    .filter((record) => recordMode(record) === mode)
+  return clientDuelHistory
+    .filter((record) => record.mode === mode)
     .filter(
       (record) =>
         !target || normalizeAddress(record.playerAddress) === target
     )
-    .map((record) => ({ ...record, mode: recordMode(record) }));
+    .map((record) => ({ ...record }));
 }
 
 export function recordDuel(
   entry: Omit<DuelRecord, "id" | "timestamp">
 ): DuelRecord {
+  const normAddress = normalizeAddress(entry.playerAddress) || entry.playerAddress;
   const newRecord: DuelRecord = {
     ...entry,
+    playerAddress: normAddress,
     id: `duel_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     timestamp: Date.now(),
   };
 
-  if (typeof window !== "undefined") {
-    try {
-      const existing = readStoredDuelHistory();
-      const updated = [newRecord, ...existing].slice(0, 100);
-      localStorage.setItem(STORAGE_KEY_DUELS, JSON.stringify(updated));
-    } catch {
-      // Storage full or restricted
-    }
+  clientDuelHistory.unshift(newRecord);
+
+  // Durable server-side persistence
+  if (typeof window !== "undefined" && window.location?.origin) {
+    fetch("/api/duel/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newRecord),
+    }).catch((err) => console.warn("Failed to persist duel to server:", err));
   }
 
   return newRecord;
+}
+
+export async function fetchDuelHistoryFromServer(
+  playerAddress?: string,
+  mode: DuelMode = "onchain"
+): Promise<DuelRecord[]> {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return getDuelHistory(playerAddress, mode);
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (playerAddress) params.set("playerAddress", playerAddress);
+    if (mode) params.set("mode", mode);
+
+    const res = await fetch(`/api/duel/history?${params.toString()}`);
+    if (!res.ok) return getDuelHistory(playerAddress, mode);
+
+    const data = await res.json();
+    if (data.success && Array.isArray(data.history)) {
+      clientDuelHistory = data.history;
+      return getDuelHistory(playerAddress, mode);
+    }
+  } catch (err) {
+    console.warn("Failed to fetch duel history from server:", err);
+  }
+
+  return getDuelHistory(playerAddress, mode);
 }
 
 export function getPlayerStats(
