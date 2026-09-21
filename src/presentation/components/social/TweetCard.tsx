@@ -1,0 +1,337 @@
+"use client";
+
+import React, { useState } from "react";
+import {
+  MessageCircle,
+  Repeat2,
+  Heart,
+  Share2,
+  Check,
+  Swords,
+  Send,
+  ArrowUpRight,
+  TrendingUp,
+} from "lucide-react";
+import { AssetLogo } from "@/presentation/components/common/AssetLogo";
+import type { SocialPost, TweetReply } from "@/domain/social/socialService";
+import { postReply, toggleRepost, toggleLike } from "@/domain/social/socialService";
+
+interface TweetCardProps {
+  post: SocialPost;
+  userAddress?: string;
+  isLiked?: boolean;
+  isReposted?: boolean;
+  onLike?: (id: string) => void;
+  onRepost?: (id: string) => void;
+  onAcceptChallenge?: (duelId?: string) => void;
+  onProfileClick?: (address: string, name?: string, initials?: string) => void;
+}
+
+// Utility to highlight $CASHTAGS
+function formatTweetContent(text: string) {
+  const parts = text.split(/(\$[A-Z]{2,6})/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("$") && part.length <= 6) {
+      return (
+        <span
+          key={index}
+          className="font-bold text-monad-600 dark:text-monad-400 hover:underline cursor-pointer"
+        >
+          {part}
+        </span>
+      );
+    }
+    return part;
+  });
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const diffSec = Math.floor((Date.now() - timestamp) / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d`;
+}
+
+export const TweetCard: React.FC<TweetCardProps> = ({
+  post,
+  userAddress,
+  isLiked: initialLiked = false,
+  isReposted: initialReposted = false,
+  onLike,
+  onRepost,
+  onAcceptChallenge,
+  onProfileClick,
+}) => {
+  const [isLiked, setIsLiked] = useState(initialLiked);
+  const [likesCount, setLikesCount] = useState(post.likesCount || post.reactionsCount || 0);
+
+  const [isReposted, setIsReposted] = useState(initialReposted);
+  const [repostsCount, setRepostsCount] = useState(post.repostsCount || 0);
+
+  const [showReplies, setShowReplies] = useState(false);
+  const [replies, setReplies] = useState<TweetReply[]>(post.replies || []);
+  const [replyText, setReplyText] = useState("");
+  const [isSubmittingReply, setIsSubmittingReply] = useState(false);
+
+  const [copied, setCopied] = useState(false);
+
+  const handleLike = () => {
+    setIsLiked(!isLiked);
+    setLikesCount((prev) => (isLiked ? Math.max(0, prev - 1) : prev + 1));
+    toggleLike(post.id, userAddress);
+    onLike?.(post.id);
+  };
+
+  const handleRepost = () => {
+    setIsReposted(!isReposted);
+    setRepostsCount((prev) => (isReposted ? Math.max(0, prev - 1) : prev + 1));
+    toggleRepost(post.id, userAddress);
+    onRepost?.(post.id);
+  };
+
+  const handleCopyLink = () => {
+    if (typeof window !== "undefined") {
+      navigator.clipboard.writeText(`${window.location.origin}/#post-${post.id}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleSendReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!replyText.trim() || !userAddress || isSubmittingReply) return;
+
+    setIsSubmittingReply(true);
+    try {
+      const newReply = await postReply(post.id, userAddress, replyText.trim());
+      if (newReply) {
+        setReplies((prev) => [...prev, newReply]);
+        setReplyText("");
+      }
+    } catch (err) {
+      console.error("Failed to send reply:", err);
+    } finally {
+      setIsSubmittingReply(false);
+    }
+  };
+
+  const authorShort = post.authorName || `${post.authorAddress.slice(0, 6)}…${post.authorAddress.slice(-4)}`;
+  const handleShort = `@${post.authorAddress.slice(0, 6)}…${post.authorAddress.slice(-4)}`;
+  const isChallenge = post.isLiveChallenge || post.kind === "challenges";
+  const isSettledDuel = post.kind === "duels";
+
+  return (
+    <article
+      id={`post-${post.id}`}
+      className="border-b border-border/70 hover:bg-surface-secondary/20 transition-colors px-4 py-3.5 sm:px-6"
+    >
+      <div className="flex gap-3">
+        {/* Author Avatar */}
+        <div className="shrink-0 pt-0.5">
+          <button
+            type="button"
+            onClick={() => onProfileClick?.(post.authorAddress, post.authorName, post.authorInitials)}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-secondary border border-border text-xs font-bold font-mono text-monad-700 hover:ring-2 hover:ring-monad-500/30 active:scale-95 transition-all shadow-sm"
+            aria-label={`View profile for ${authorShort}`}
+          >
+            {post.authorInitials}
+          </button>
+        </div>
+
+        {/* Tweet Content & Actions Column */}
+        <div className="flex-1 min-w-0">
+          {/* Tweet Header Line */}
+          <div className="flex items-center justify-between gap-1 flex-wrap">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => onProfileClick?.(post.authorAddress, post.authorName, post.authorInitials)}
+                className="font-bold text-text-primary text-sm hover:underline truncate"
+              >
+                {authorShort}
+              </button>
+              <span className="text-xs text-text-tertiary font-mono truncate hidden sm:inline">
+                {handleShort}
+              </span>
+              <span className="text-xs text-text-tertiary">·</span>
+              <span className="text-xs text-text-tertiary whitespace-nowrap">
+                {formatRelativeTime(post.timestamp)}
+              </span>
+            </div>
+
+            {/* Kind Badge */}
+            {isChallenge && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-monad-50 text-monad-700 border border-monad-200">
+                <Swords size={11} />
+                <span>Arena Duel</span>
+              </span>
+            )}
+            {isSettledDuel && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-positive/10 text-positive border border-positive/20">
+                <TrendingUp size={11} />
+                <span>Match Settled</span>
+              </span>
+            )}
+          </div>
+
+          {/* Tweet Body Text */}
+          <p className="mt-1 text-sm sm:text-[15px] text-text-primary leading-relaxed break-words whitespace-pre-wrap">
+            {formatTweetContent(post.content || post.description || post.title)}
+          </p>
+
+          {/* Embedded Arena Challenge / Match Card */}
+          {isChallenge && (
+            <div className="mt-2.5 p-3 rounded-2xl bg-monad-50/60 border border-monad-200/80 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <AssetLogo symbol={(post.asset || "BTC") as any} size={22} />
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-text-primary">
+                      {post.asset || "BTC"}/USD 30s Clash
+                    </span>
+                    <span className="text-[11px] font-mono text-monad-700 font-bold bg-monad-100/80 px-1.5 py-0.2 rounded">
+                      {post.stakeMon || 0.1} MON
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-text-secondary">
+                    Monad Testnet Escrow • Real Settlement
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onAcceptChallenge?.(post.duelId)}
+                className="px-3.5 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95 transition-all"
+              >
+                <Swords size={13} />
+                <span>Accept</span>
+              </button>
+            </div>
+          )}
+
+          {/* Tweet Action Bar (Reply, Repost, Like, Share) */}
+          <div className="flex items-center justify-between max-w-md pt-2 mt-1 text-text-tertiary">
+            {/* 1. Reply Button */}
+            <button
+              type="button"
+              onClick={() => setShowReplies(!showReplies)}
+              className="flex items-center gap-1.5 text-xs group hover:text-sky-500 active:scale-95 transition-colors"
+              aria-label="Reply"
+            >
+              <div className="p-1.5 rounded-full group-hover:bg-sky-50 transition-colors">
+                <MessageCircle size={15} />
+              </div>
+              <span className={showReplies ? "text-sky-500 font-bold" : ""}>
+                {replies.length > 0 ? replies.length : ""}
+              </span>
+            </button>
+
+            {/* 2. Repost Button */}
+            <button
+              type="button"
+              onClick={handleRepost}
+              className={`flex items-center gap-1.5 text-xs group transition-colors active:scale-95 ${
+                isReposted ? "text-emerald-500 font-bold" : "hover:text-emerald-500"
+              }`}
+              aria-label="Repost"
+            >
+              <div className="p-1.5 rounded-full group-hover:bg-emerald-50 transition-colors">
+                <Repeat2 size={16} className={isReposted ? "rotate-180 transition-transform" : ""} />
+              </div>
+              <span>{repostsCount > 0 ? repostsCount : ""}</span>
+            </button>
+
+            {/* 3. Like Button */}
+            <button
+              type="button"
+              onClick={handleLike}
+              className={`flex items-center gap-1.5 text-xs group transition-colors active:scale-95 ${
+                isLiked ? "text-rose-500 font-bold" : "hover:text-rose-500"
+              }`}
+              aria-label="Like"
+            >
+              <div className="p-1.5 rounded-full group-hover:bg-rose-50 transition-colors">
+                <Heart size={15} fill={isLiked ? "currentColor" : "none"} />
+              </div>
+              <span>{likesCount > 0 ? likesCount : ""}</span>
+            </button>
+
+            {/* 4. Share Button */}
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="flex items-center gap-1.5 text-xs group hover:text-monad-600 active:scale-95 transition-colors"
+              aria-label="Share"
+            >
+              <div className="p-1.5 rounded-full group-hover:bg-monad-50 transition-colors">
+                {copied ? <Check size={15} className="text-positive" /> : <Share2 size={15} />}
+              </div>
+              <span>{copied ? "Copied" : ""}</span>
+            </button>
+          </div>
+
+          {/* Inline Replies Thread */}
+          {showReplies && (
+            <div className="mt-3 pt-3 border-t border-border/50 space-y-3 animate-in fade-in duration-150">
+              {/* Existing Replies List */}
+              {replies.length > 0 && (
+                <div className="space-y-2.5">
+                  {replies.map((reply) => (
+                    <div key={reply.id} className="flex gap-2.5 text-xs">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-secondary border border-border text-[10px] font-bold font-mono text-monad-700">
+                        {reply.authorInitials}
+                      </div>
+                      <div className="flex-1 bg-surface-secondary/40 p-2.5 rounded-xl border border-border/50">
+                        <div className="flex items-center gap-1.5 font-semibold text-text-primary">
+                          <span>{reply.authorName}</span>
+                          <span className="text-[10px] text-text-tertiary">·</span>
+                          <span className="text-[10px] text-text-tertiary">
+                            {formatRelativeTime(reply.timestamp)}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-text-secondary leading-relaxed">
+                          {formatTweetContent(reply.content)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Reply Composer Input */}
+              {userAddress ? (
+                <form onSubmit={handleSendReply} className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Post your reply..."
+                    className="flex-1 bg-surface-secondary px-3 py-1.5 rounded-full text-xs text-text-primary placeholder:text-text-tertiary border border-border/60 focus:outline-none focus:border-monad-600 transition-colors"
+                    maxLength={280}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!replyText.trim() || isSubmittingReply}
+                    className="px-3.5 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 disabled:opacity-40 text-white text-xs font-bold flex items-center gap-1 active:scale-95 transition-all shadow-sm"
+                  >
+                    <Send size={11} />
+                    <span>Reply</span>
+                  </button>
+                </form>
+              ) : (
+                <p className="text-[11px] text-text-tertiary italic">
+                  Connect your wallet to reply to this duel thread.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+};

@@ -144,3 +144,46 @@ test("social feed contains zero fake financial payouts or mock wins", async () =
     }
   }
 });
+
+test("social store supports Twitter-style replies on tweets and challenges", async () => {
+  const { addTweetReply, getTweetReplies } = await import("../src/infrastructure/social/socialStore.ts");
+  const postId = "genesis-challenge-1";
+
+  const initialReplies = getTweetReplies(postId);
+  const reply = addTweetReply(postId, {
+    authorAddress: viewer,
+    authorName: "AlphaTrader",
+    content: "Calling your bluff on $BTC. Let's see who wins in 30s.",
+  });
+
+  assert.ok(reply);
+  assert.equal(reply.authorAddress, viewer.toLowerCase());
+  assert.equal(reply.content, "Calling your bluff on $BTC. Let's see who wins in 30s.");
+
+  const updatedReplies = getTweetReplies(postId);
+  assert.equal(updatedReplies.length, initialReplies.length + 1);
+  assert.equal(updatedReplies[updatedReplies.length - 1].id, reply.id);
+});
+
+test("social store tracks Twitter-style reposts / retweets per account", async () => {
+  const { toggleServerRepost, getServerReposts } = await import("../src/infrastructure/social/socialStore.ts");
+  const postId = "test-repost-post-1";
+
+  const firstRepost = toggleServerRepost(postId, viewer);
+  assert.equal(firstRepost.isReposted, true);
+  assert.equal(firstRepost.count, 1);
+
+  const queryRepost = getServerReposts(postId, viewer);
+  assert.equal(queryRepost.isReposted, true);
+  assert.equal(queryRepost.count, 1);
+
+  // Other user views repost status
+  const otherQuery = getServerReposts(postId, other);
+  assert.equal(otherQuery.isReposted, false);
+  assert.equal(otherQuery.count, 1);
+
+  // Viewer un-reposts
+  const unRepost = toggleServerRepost(postId, viewer);
+  assert.equal(unRepost.isReposted, false);
+  assert.equal(unRepost.count, 0);
+});

@@ -3,6 +3,7 @@ import {
   getAllChallenges,
   saveChallenge,
   getServerReactions,
+  getServerReposts,
 } from "@/infrastructure/social/socialStore";
 import { normalizeAddress } from "@/domain/social/identity";
 
@@ -13,11 +14,18 @@ export async function GET(request: NextRequest) {
 
     const rawChallenges = getAllChallenges();
     const feed = rawChallenges.map((ch) => {
-      const { isLiked, count } = getServerReactions(ch.id, viewerAddress);
+      const { isLiked, count: likesCount } = getServerReactions(ch.id, viewerAddress);
+      const { isReposted, count: repostsCount } = getServerReposts(ch.id, viewerAddress);
       return {
         ...ch,
-        reactionsCount: count,
+        content: ch.content || ch.description,
+        reactionsCount: likesCount,
+        likesCount,
         isLiked,
+        repostsCount,
+        isReposted,
+        repliesCount: ch.replies ? ch.replies.length : 0,
+        replies: ch.replies || [],
       };
     });
 
@@ -33,11 +41,12 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { authorAddress, title, description, asset, stakeMon, duelId } = body;
+    const { authorAddress, content, title, description, asset, stakeMon, duelId, kind } = body;
 
-    if (!authorAddress || !title || !description) {
+    const postContent = content || description || title;
+    if (!authorAddress || !postContent) {
       return NextResponse.json(
-        { success: false, error: "authorAddress, title, and description are required" },
+        { success: false, error: "authorAddress and content are required" },
         { status: 400 }
       );
     }
@@ -50,22 +59,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const isChallenge = Boolean(stakeMon || duelId || kind === "challenges");
     const record = saveChallenge({
       authorAddress: normalized,
-      title: String(title).slice(0, 140),
-      description: String(description).slice(0, 280),
-      eyebrow: `${asset || "BTC"} Duel Challenge`,
-      kind: "challenges",
-      asset: asset || "BTC",
-      stakeMon: Number(stakeMon) || 0.1,
+      title: title ? String(title).slice(0, 140) : String(postContent).slice(0, 70),
+      description: String(postContent).slice(0, 280),
+      content: String(postContent).slice(0, 280),
+      eyebrow: isChallenge ? `${asset || "BTC"} Arena Challenge` : "Trader Pulse",
+      kind: isChallenge ? "challenges" : (kind || "tweets"),
+      asset: isChallenge ? (asset || "BTC") : undefined,
+      stakeMon: isChallenge ? (Number(stakeMon) || 0.1) : undefined,
       authorInitials: normalized.slice(2, 4).toUpperCase(),
       duelId: duelId ? String(duelId) : undefined,
+      isLiveChallenge: isChallenge,
     });
 
-    return NextResponse.json({ success: true, challenge: record });
+    return NextResponse.json({ success: true, tweet: record, challenge: record });
   } catch (error: any) {
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to create challenge" },
+      { success: false, error: error.message || "Failed to create tweet" },
       { status: 500 }
     );
   }
