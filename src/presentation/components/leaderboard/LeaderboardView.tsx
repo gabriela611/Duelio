@@ -231,7 +231,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ userAddress, o
               No On-chain Rankings Yet
             </h4>
             <p className="text-xs text-text-secondary max-w-sm mx-auto leading-relaxed">
-              No duels have settled on Monad Testnet yet. Complete a 10-second clash in the Arena to claim the #1 spot on the leaderboard.
+              Financial duels are currently disabled. Practice clashes do not affect the on-chain leaderboard.
             </p>
             {onBack && (
               <button

@@ -13,20 +13,14 @@ import {
   Radio,
   CheckCircle2,
   XCircle,
-  ExternalLink,
-  Loader2,
-  AlertCircle,
 } from "lucide-react";
-import { useWallets } from "@privy-io/react-auth";
-import { parseEther } from "viem";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 import { PriceSparkline } from "./PriceSparkline";
 import { SupportedAsset, usePriceStream } from "@/infrastructure/price-feed/usePriceStream";
+import { getPriceSourceLabel } from "@/infrastructure/price-feed/priceSource";
 import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
 import { formatNativeBalance } from "@/domain/social/identity";
-import { DUEL_ARENA_CONTRACT_ADDRESS, HOUSE_TREASURY_ADDRESS, monadTestnet } from "@/infrastructure/web3/monadChain";
 import { recordDuel, getPlayerStats } from "@/domain/duel/duelHistory";
-import { sendStakeToHouse } from "@/infrastructure/web3/sendStakeTransaction";
 
 interface ArenaViewProps {
   userAddress?: string;
@@ -40,7 +34,6 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
   const [selectedAsset, setSelectedAsset] = useState<SupportedAsset>("BTC");
   const { currentPrice, isLive, source } = usePriceStream(selectedAsset);
   const nativeBalance = useNativeBalance(userAddress);
-  const refreshBalance = nativeBalance.refresh;
   const isWalletConnected = Boolean(userAddress);
 
   // Gamified 10-second Duel State
@@ -51,34 +44,18 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
   const [settledPrice, setSettledPrice] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState<number>(10);
 
-  // On-chain transaction state
-  const { wallets } = useWallets();
-  const activeWallet =
-    wallets?.find((w) => w.address.toLowerCase() === userAddress?.toLowerCase()) ||
-    wallets?.[0];
-
-  const [isSubmittingTx, setIsSubmittingTx] = useState<boolean>(false);
-  const [entryTxHash, setEntryTxHash] = useState<string | null>(null);
-  const [payoutTxHash, setPayoutTxHash] = useState<string | null>(null);
-  const [txError, setTxError] = useState<string | null>(null);
-
   // Player Stats & Session State - Loaded from persistent records
-  const [elo, setElo] = useState<number>(() => getPlayerStats(userAddress).elo);
-  const [streak, setStreak] = useState<number>(() => getPlayerStats(userAddress).streak);
-  const [selectedStake, setSelectedStake] = useState<number>(0.1);
+  const [elo, setElo] = useState<number>(() => getPlayerStats(userAddress, "practice").elo);
+  const [streak, setStreak] = useState<number>(() => getPlayerStats(userAddress, "practice").streak);
 
   useEffect(() => {
-    const stats = getPlayerStats(userAddress);
+    const stats = getPlayerStats(userAddress, "practice");
     setElo(stats.elo);
     setStreak(stats.streak);
   }, [userAddress]);
 
   // Round resolution data
   const [roundWinner, setRoundWinner] = useState<"PLAYER" | "OPPONENT" | "DRAW" | null>(null);
-
-  const isContractDeployed =
-    DUEL_ARENA_CONTRACT_ADDRESS &&
-    DUEL_ARENA_CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000";
 
   const displayBalance =
     isWalletConnected && nativeBalance.status === "ready" && nativeBalance.value !== undefined
@@ -91,48 +68,25 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Live difference during the active round
+  const isBenchmark = source === "benchmark";
+
+  // Current difference during the active round
   const currentDelta = strikePrice > 0 ? currentPrice - strikePrice : 0;
   const currentDeltaPercent = strikePrice > 0 ? (currentDelta / strikePrice) * 100 : 0;
   const isWinningLive =
     playerPrediction === "HIGHER" ? currentDelta > 0 : currentDelta < 0;
 
-  // Start 10s Speed Clash with REAL on-chain stake
-  const handleStartRound = async (direction: Direction) => {
-    if (roundState !== "IDLE" || currentPrice <= 0 || isSubmittingTx) return;
+  // Practice rounds are intentionally local and never submit a wallet transaction.
+  const handleStartRound = (direction: Direction) => {
+    if (roundState !== "IDLE" || currentPrice <= 0) return;
 
-    if (!isWalletConnected || !activeWallet) {
-      onConnect?.();
-      return;
-    }
-
-    setTxError(null);
-    setIsSubmittingTx(true);
-
-    try {
-      // Execute real on-chain stake to the House Treasury on Monad Testnet (Universal for all wallets)
-      const { txHash } = await sendStakeToHouse(activeWallet, selectedStake);
-      setEntryTxHash(txHash);
-
-      const oppDir: Direction = direction === "HIGHER" ? "LOWER" : "HIGHER";
-      setPlayerPrediction(direction);
-      setOpponentPrediction(oppDir);
-      setStrikePrice(currentPrice);
-      setTimeLeft(10);
-      setRoundState("COUNTDOWN");
-      setRoundWinner(null);
-      refreshBalance();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Transaction was rejected";
-      console.warn("Duel stake transaction rejected or failed:", msg);
-      setTxError(
-        msg.includes("User rejected") || msg.includes("denied")
-          ? "Transaction was rejected in wallet"
-          : msg
-      );
-    } finally {
-      setIsSubmittingTx(false);
-    }
+    const oppDir: Direction = direction === "HIGHER" ? "LOWER" : "HIGHER";
+    setPlayerPrediction(direction);
+    setOpponentPrediction(oppDir);
+    setStrikePrice(currentPrice);
+    setTimeLeft(10);
+    setRoundState("COUNTDOWN");
+    setRoundWinner(null);
   };
 
   // 10-second Countdown Loop
@@ -166,12 +120,10 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
       let winner: "PLAYER" | "OPPONENT" | "DRAW" = "DRAW";
       let eloDelta = 0;
       let outcome: "WIN" | "LOSS" | "DRAW" = "DRAW";
-      let payout = 0;
 
       if (delta === 0) {
         winner = "DRAW";
         outcome = "DRAW";
-        payout = selectedStake;
       } else if (
         (playerPrediction === "HIGHER" && delta > 0) ||
         (playerPrediction === "LOWER" && delta < 0)
@@ -179,8 +131,6 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
         winner = "PLAYER";
         outcome = "WIN";
         eloDelta = 18;
-        // 1.96x return (2% house fee subtracted)
-        payout = Number((selectedStake * 1.96).toFixed(4));
         setStreak((prev) => prev + 1);
         setElo((prev) => prev + 18);
       } else {
@@ -200,54 +150,13 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
         settledPrice: finalPrice,
         direction: playerPrediction || "HIGHER",
         outcome,
-        stake: selectedStake,
-        payout,
+        stake: 0,
+        payout: 0,
         eloDelta,
+        mode: "practice",
       });
-
-      // On-chain settlement dispatch:
-      if (winner === "PLAYER" && payout > 0 && entryTxHash) {
-        fetch("/api/clash/settle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userAddress,
-            outcome: "WIN",
-            entryTxHash,
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.payoutTxHash) {
-              setPayoutTxHash(data.payoutTxHash);
-            }
-            refreshBalance();
-          })
-          .catch((err) => console.error("Settlement payout failed:", err));
-      } else if (winner === "DRAW" && entryTxHash) {
-        fetch("/api/clash/settle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userAddress,
-            outcome: "DRAW",
-            entryTxHash,
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.payoutTxHash) {
-              setPayoutTxHash(data.payoutTxHash);
-            }
-            refreshBalance();
-          })
-          .catch((err) => console.error("Draw refund failed:", err));
-      } else {
-        // Outcome is LOSS: The funds were already deposited to House Treasury on Monad Testnet!
-        refreshBalance();
-      }
     }
-  }, [timeLeft, roundState, currentPrice, strikePrice, playerPrediction, selectedStake, selectedAsset, userAddress, entryTxHash, refreshBalance]);
+  }, [timeLeft, roundState, currentPrice, strikePrice, playerPrediction, selectedAsset, userAddress]);
 
   const handleReset = () => {
     setRoundState("IDLE");
@@ -257,10 +166,6 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
     setSettledPrice(0);
     setTimeLeft(10);
     setRoundWinner(null);
-    setEntryTxHash(null);
-    setPayoutTxHash(null);
-    setTxError(null);
-    refreshBalance();
   };
 
   return (
@@ -281,24 +186,18 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                 {isWalletConnected ? `${userAddress!.slice(0, 6)}…${userAddress!.slice(-4)}` : "Guest Duelist"}
               </h2>
               <span className="px-2 py-0.5 rounded-full bg-surface-secondary text-text-primary text-xs font-semibold font-mono border border-border">
-                {elo} ELO
+                {elo} Practice ELO
               </span>
               <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold font-mono flex items-center gap-1 border border-amber-200">
                 <Flame className="w-3 h-3 text-amber-500" />
-                <span>{streak} Streak</span>
+                <span>{streak} Practice Streak</span>
               </span>
-              {isContractDeployed ? (
-                <span className="px-2 py-0.5 rounded-full bg-positive/10 text-positive text-[10px] font-semibold font-mono">
-                  On-chain Escrow Live
-                </span>
-              ) : (
-                <span className="px-2 py-0.5 rounded-full bg-monad-50 text-monad-700 text-[10px] font-mono border border-monad-200">
-                  Monad Testnet
-                </span>
-              )}
+              <span className="px-2 py-0.5 rounded-full bg-monad-50 text-monad-700 text-[10px] font-semibold font-mono border border-monad-200">
+                Practice Mode
+              </span>
             </div>
             <p className="break-all text-xs text-text-secondary font-mono mt-0.5">
-              {isWalletConnected ? userAddress : "Connect wallet to duel with real testnet MON"}
+              {isWalletConnected ? userAddress : "No wallet required for practice"}
             </p>
           </div>
         </div>
@@ -391,15 +290,25 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
 
           {/* Oracle Status Badge */}
           <div className="flex items-center gap-1.5 text-xs font-mono text-text-secondary">
-            <Radio className="w-3.5 h-3.5 text-positive animate-pulse" />
+            <Radio
+              className={`w-3.5 h-3.5 ${
+                isLive
+                  ? "text-positive animate-pulse"
+                  : isBenchmark
+                  ? "text-amber-500"
+                  : "text-text-tertiary"
+              }`}
+            />
             <span className="font-medium">
-              {source === "pyth" ? "Pyth Hermes Oracle" : "Live Price Stream"}
+              {getPriceSourceLabel(source)}
             </span>
-            <span className="text-[10px] text-text-tertiary">· 10s Round</span>
+            <span className="text-[10px] text-text-tertiary">
+              · {isLive ? "Live" : "Not live"} · 10s Round
+            </span>
           </div>
         </div>
 
-        {/* Live Asset Sparkline with Real Prices */}
+        {/* Asset sparkline with an explicit source label */}
         <PriceSparkline asset={selectedAsset} />
 
         {/* BATTLE CANVAS */}
@@ -407,7 +316,15 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
           {/* Header: Duel Info & Opponent */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-positive animate-pulse" />
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  isLive
+                    ? "bg-positive animate-pulse"
+                    : isBenchmark
+                    ? "bg-amber-500"
+                    : "bg-text-tertiary"
+                }`}
+              />
               <span className="text-xs font-bold text-text-primary uppercase tracking-wide">
                 10-Second Battle Arena
               </span>
@@ -415,7 +332,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
 
             <div className="flex items-center gap-2 text-xs text-text-secondary">
               <Swords className="w-3.5 h-3.5 text-text-tertiary" />
-              <span className="font-semibold text-text-primary">Rival: CryptoKnight</span>
+              <span className="font-semibold text-text-primary">Practice bot: CryptoKnight</span>
               <span className="font-mono text-text-tertiary">(1820 ELO)</span>
             </div>
           </div>
@@ -460,7 +377,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
 
                 <div className="p-3.5 rounded-2xl bg-surface border border-border space-y-1">
                   <span className="text-[11px] font-semibold text-text-tertiary uppercase block">
-                    Live Delta
+                    {isBenchmark ? "Simulated Delta" : "Live Delta"}
                   </span>
                   <div className="flex items-baseline gap-1.5">
                     <span
@@ -526,8 +443,10 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                   }`}
                 >
                   {roundWinner === "PLAYER"
-                    ? `+${(selectedStake * 0.96).toFixed(2)} MON · +18 ELO`
-                    : `-${selectedStake.toFixed(2)} MON · -12 ELO`}
+                    ? "+18 practice ELO"
+                    : roundWinner === "OPPONENT"
+                    ? "-12 practice ELO"
+                    : "No ELO change"}
                 </span>
               </div>
 
@@ -546,52 +465,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                 </div>
               </div>
 
-              {/* On-Chain Transaction Receipts on Monad Testnet */}
-              <div className="pt-2 border-t border-border space-y-1.5 text-[11px] font-mono">
-                {entryTxHash && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-text-tertiary">Stake Escrow Tx:</span>
-                    <a
-                      href={`https://testnet.monadscan.com/tx/${entryTxHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-monad-600 hover:underline inline-flex items-center gap-1 font-semibold"
-                    >
-                      <span>{entryTxHash.slice(0, 8)}…{entryTxHash.slice(-6)}</span>
-                      <ExternalLink size={10} />
-                    </a>
-                  </div>
-                )}
-
-                {payoutTxHash && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-positive font-semibold">House Payout Tx:</span>
-                    <a
-                      href={`https://testnet.monadscan.com/tx/${payoutTxHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-positive hover:underline inline-flex items-center gap-1 font-bold"
-                    >
-                      <span>{payoutTxHash.slice(0, 8)}…{payoutTxHash.slice(-6)}</span>
-                      <ExternalLink size={10} />
-                    </a>
-                  </div>
-                )}
-
-                {roundWinner === "OPPONENT" && (
-                  <div className="p-2.5 rounded-xl bg-negative/10 border border-negative/20 text-negative text-xs text-center font-medium">
-                    Stake of {selectedStake} MON deducted and collected by House Treasury (
-                    <a
-                      href={`https://testnet.monadscan.com/address/${HOUSE_TREASURY_ADDRESS}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline font-bold"
-                    >
-                      {HOUSE_TREASURY_ADDRESS.slice(0, 6)}…{HOUSE_TREASURY_ADDRESS.slice(-4)}
-                    </a>
-                    ).
-                  </div>
-                )}
+              <div className="pt-2 border-t border-border text-[11px] font-mono text-center text-text-secondary">
+                Practice only · no MON sent · no payout or on-chain settlement
               </div>
 
               <button
@@ -607,45 +482,8 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
           {/* CLASH STATE: 3. IDLE / READY (TWO TACTILE BUTTONS) */}
           {roundState === "IDLE" && (
             <div className="space-y-4">
-              {/* Transaction error alert */}
-              {txError && (
-                <div className="p-3 rounded-2xl bg-negative/10 border border-negative/20 text-negative text-xs flex items-center gap-2 animate-fade-in">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span className="truncate">{txError}</span>
-                </div>
-              )}
-
-              {/* Transaction signing state */}
-              {isSubmittingTx && (
-                <div className="p-4 rounded-2xl bg-monad-50 border border-monad-200 text-monad-800 text-xs flex items-center justify-center gap-3 animate-pulse">
-                  <Loader2 className="w-5 h-5 animate-spin text-monad-600" />
-                  <span className="font-semibold">
-                    Submitting {selectedStake} MON stake to Monad Testnet… Check your wallet
-                  </span>
-                </div>
-              )}
-
-              {/* Stake Selector */}
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-xs font-semibold text-text-secondary">
-                  Round Stake:
-                </span>
-                <div className="inline-flex items-center gap-1.5">
-                  {[0.05, 0.1, 0.25, 0.5].map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setSelectedStake(amt)}
-                      disabled={isSubmittingTx}
-                      className={`px-3 py-1 rounded-xl text-xs font-mono font-semibold transition-all active:scale-95 disabled:opacity-50 ${
-                        selectedStake === amt
-                          ? "bg-text-primary text-white shadow-soft"
-                          : "bg-surface text-text-secondary hover:text-text-primary border border-border"
-                      }`}
-                    >
-                      {amt} MON
-                    </button>
-                  ))}
-                </div>
+              <div className="p-3 rounded-2xl bg-monad-50 border border-monad-200 text-monad-800 text-xs text-center">
+                Practice mode uses {isBenchmark ? "simulated benchmark" : "live market"} prices but never requests a wallet signature or sends MON.
               </div>
 
               <p className="text-xs text-text-secondary leading-relaxed text-center">
@@ -657,16 +495,12 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                 {/* HIGHER BUTTON */}
                 <button
                   onClick={() => handleStartRound("HIGHER")}
-                  disabled={isSubmittingTx || currentPrice <= 0}
+                  disabled={currentPrice <= 0}
                   className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-positive/30 hover:border-positive hover:bg-positive/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <div className="flex items-center gap-3 text-left">
                     <div className="w-10 h-10 rounded-xl bg-positive/10 text-positive flex items-center justify-center group-hover:scale-105 transition-transform">
-                      {isSubmittingTx ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <TrendingUp className="w-5 h-5 stroke-[2.5]" />
-                      )}
+                      <TrendingUp className="w-5 h-5 stroke-[2.5]" />
                     </div>
                     <div>
                       <span className="text-base font-bold text-text-primary block leading-tight">
@@ -678,23 +512,19 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                     </div>
                   </div>
                   <span className="text-xs font-mono font-bold text-positive bg-positive/10 px-2 py-1 rounded-lg">
-                    1.96x
+                    Practice
                   </span>
                 </button>
 
                 {/* LOWER BUTTON */}
                 <button
                   onClick={() => handleStartRound("LOWER")}
-                  disabled={isSubmittingTx || currentPrice <= 0}
+                  disabled={currentPrice <= 0}
                   className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-negative/30 hover:border-negative hover:bg-negative/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <div className="flex items-center gap-3 text-left">
                     <div className="w-10 h-10 rounded-xl bg-negative/10 text-negative flex items-center justify-center group-hover:scale-105 transition-transform">
-                      {isSubmittingTx ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <TrendingDown className="w-5 h-5 stroke-[2.5]" />
-                      )}
+                      <TrendingDown className="w-5 h-5 stroke-[2.5]" />
                     </div>
                     <div>
                       <span className="text-base font-bold text-text-primary block leading-tight">
@@ -706,23 +536,13 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                     </div>
                   </div>
                   <span className="text-xs font-mono font-bold text-negative bg-negative/10 px-2 py-1 rounded-lg">
-                    1.96x
+                    Practice
                   </span>
                 </button>
               </div>
 
-              {/* House Treasury on-chain badge */}
-              <div className="pt-2 text-center text-[11px] font-mono text-text-tertiary flex items-center justify-center gap-1.5">
-                <span>⚡ Escrow On-Chain: fondos enrutados a la Casa</span>
-                <a
-                  href={`https://testnet.monadscan.com/address/${HOUSE_TREASURY_ADDRESS}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-monad-600 hover:underline font-semibold inline-flex items-center gap-0.5"
-                >
-                  <span>({HOUSE_TREASURY_ADDRESS.slice(0, 6)}…{HOUSE_TREASURY_ADDRESS.slice(-4)})</span>
-                  <ExternalLink size={9} />
-                </a>
+              <div className="pt-2 text-center text-[11px] font-mono text-text-tertiary">
+                Financial duels remain disabled until the DuelArena lifecycle is connected.
               </div>
             </div>
           )}

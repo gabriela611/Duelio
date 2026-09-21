@@ -1,5 +1,7 @@
-import { normalizeAddress } from "@/domain/social/identity";
-import { Trader } from "@/domain/trader/Trader";
+import { normalizeAddress } from "../social/identity.ts";
+import type { Trader } from "../trader/Trader.ts";
+
+export type DuelMode = "practice" | "onchain";
 
 export interface DuelRecord {
   id: string;
@@ -13,6 +15,7 @@ export interface DuelRecord {
   stake: number;
   payout: number;
   eloDelta: number;
+  mode: DuelMode;
 }
 
 export interface PlayerStats {
@@ -30,18 +33,36 @@ export interface PlayerStats {
 
 const STORAGE_KEY_DUELS = "duelio_duel_records_v1";
 
-export function getDuelHistory(playerAddress?: string): DuelRecord[] {
+type StoredDuelRecord = Omit<DuelRecord, "mode"> & { mode?: DuelMode };
+
+function readStoredDuelHistory(): StoredDuelRecord[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DUELS);
     if (!raw) return [];
-    const all: DuelRecord[] = JSON.parse(raw);
-    if (!playerAddress) return all;
-    const target = normalizeAddress(playerAddress);
-    return all.filter((d) => normalizeAddress(d.playerAddress) === target);
+    return JSON.parse(raw) as StoredDuelRecord[];
   } catch {
     return [];
   }
+}
+
+function recordMode(record: StoredDuelRecord): DuelMode {
+  // Records created before mode separation came from the local practice arena.
+  return record.mode === "onchain" ? "onchain" : "practice";
+}
+
+export function getDuelHistory(
+  playerAddress?: string,
+  mode: DuelMode = "onchain"
+): DuelRecord[] {
+  const target = normalizeAddress(playerAddress);
+  return readStoredDuelHistory()
+    .filter((record) => recordMode(record) === mode)
+    .filter(
+      (record) =>
+        !target || normalizeAddress(record.playerAddress) === target
+    )
+    .map((record) => ({ ...record, mode: recordMode(record) }));
 }
 
 export function recordDuel(
@@ -55,7 +76,7 @@ export function recordDuel(
 
   if (typeof window !== "undefined") {
     try {
-      const existing = getDuelHistory();
+      const existing = readStoredDuelHistory();
       const updated = [newRecord, ...existing].slice(0, 100);
       localStorage.setItem(STORAGE_KEY_DUELS, JSON.stringify(updated));
     } catch {
@@ -66,9 +87,12 @@ export function recordDuel(
   return newRecord;
 }
 
-export function getPlayerStats(playerAddress?: string): PlayerStats {
+export function getPlayerStats(
+  playerAddress?: string,
+  mode: DuelMode = "onchain"
+): PlayerStats {
   const normalized = normalizeAddress(playerAddress) || "0x0000000000000000000000000000000000000000";
-  const history = getDuelHistory(playerAddress);
+  const history = getDuelHistory(playerAddress, mode);
 
   if (history.length === 0) {
     return {

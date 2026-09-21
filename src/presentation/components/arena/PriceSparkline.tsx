@@ -10,7 +10,7 @@ interface PriceSparklineProps {
 }
 
 export const PriceSparkline: React.FC<PriceSparklineProps> = ({ asset }) => {
-  const { currentPrice, changePercent, history, isLive } = usePriceStream(asset);
+  const { currentPrice, changePercent, history, isLive, source } = usePriceStream(asset);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const isPositive = changePercent >= 0;
@@ -63,7 +63,7 @@ export const PriceSparkline: React.FC<PriceSparklineProps> = ({ asset }) => {
 
   return (
     <div className="p-3.5 rounded-2xl bg-surface-secondary/70 border border-border space-y-2.5 transition-all">
-      {/* Header: Asset & Real-Time Price */}
+      {/* Header: Asset & Price Source */}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -73,9 +73,17 @@ export const PriceSparkline: React.FC<PriceSparklineProps> = ({ asset }) => {
             </span>
             <span className="flex items-center gap-1 text-[10px] font-mono text-text-secondary bg-surface px-1.5 py-0.5 rounded-md border border-border">
               <Radio
-                className={`w-2.5 h-2.5 ${isLive ? "text-positive animate-pulse" : "text-text-tertiary"}`}
+                className={`w-2.5 h-2.5 ${
+                  isLive
+                    ? "text-positive animate-pulse"
+                    : source === "benchmark"
+                    ? "text-amber-500"
+                    : "text-text-tertiary"
+                }`}
               />
-              <span>{isLive ? "LIVE" : "SYNC"}</span>
+              <span>
+                {source === "benchmark" ? "SIMULATED" : isLive ? "LIVE" : "SYNC"}
+              </span>
             </span>
           </div>
 
@@ -143,7 +151,7 @@ export const PriceSparkline: React.FC<PriceSparklineProps> = ({ asset }) => {
             cy={lastPoint.y}
             r="3.5"
             fill={strokeColor}
-            className="animate-pulse"
+            className={isLive ? "animate-pulse" : undefined}
           />
           <circle
             cx={lastPoint.x}
