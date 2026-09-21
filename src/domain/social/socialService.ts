@@ -1,5 +1,5 @@
-import { normalizeAddress, canFollow } from "@/domain/social/identity";
-import { getDuelHistory, DuelRecord } from "@/domain/duel/duelHistory";
+import { normalizeAddress, canFollow } from "./identity.ts";
+import { getDuelHistory, type DuelRecord } from "../duel/duelHistory.ts";
 
 export interface SocialPost {
   id: string;
@@ -22,7 +22,7 @@ const STORAGE_KEY_USER_POSTS = "duelio_user_challenges_v1";
 const STORAGE_KEY_LIKES = "duelio_social_likes_v1";
 const STORAGE_KEY_FOLLOWS = "duelio_social_follows_v1";
 
-// Default community seeds on Monad Testnet
+// Realistic arena challenge seeds on Monad Testnet without fabricated financial payouts
 const COMMUNITY_SEEDS: SocialPost[] = [
   {
     id: "genesis-challenge-1",
@@ -30,40 +30,29 @@ const COMMUNITY_SEEDS: SocialPost[] = [
     authorName: "Duelist Alpha",
     authorInitials: "DA",
     kind: "challenges",
-    eyebrow: "Open 10s Arena Challenge",
-    title: "Who can predict BTC in 10s?",
-    description: "Looking for a rival in the 10-second arena. 0.5 MON stake ready. Let's see who has the best reflexes.",
+    eyebrow: "Open 30s Arena Challenge",
+    title: "Who can predict BTC in 30s?",
+    description: "Looking for a rival in the 30-second arena. 0.1 MON stake ready on Monad Testnet.",
     timestamp: Date.now() - 1000 * 60 * 18,
-    stakeMon: 0.5,
+    stakeMon: 0.1,
     asset: "BTC",
     reactionsCount: 14,
     isLiveChallenge: true,
   },
   {
-    id: "genesis-duel-1",
+    id: "genesis-challenge-2",
     authorAddress: "0x836EF90000000000000000000000000000000002",
-    authorName: "SpeedRunner",
-    authorInitials: "SR",
-    kind: "duels",
-    eyebrow: "Settled Speed Clash",
-    title: "SOL/USD 10s Clash Victory",
-    description: "Called HIGHER at $142.10 right before the hermes oracle tick. Net payout +0.98 MON on Monad Testnet.",
-    timestamp: Date.now() - 1000 * 60 * 45,
-    stakeMon: 0.5,
-    asset: "SOL",
-    reactionsCount: 29,
-  },
-  {
-    id: "genesis-milestone-1",
-    authorAddress: "0x836EF90000000000000000000000000000000003",
     authorName: "MonadMaster",
     authorInitials: "MM",
-    kind: "milestones",
-    eyebrow: "Arena Milestone",
-    title: "5x Win Streak Unlocked",
-    description: "Maintained a 100% win rate across 5 consecutive directional clashes. Climbing the rankings.",
-    timestamp: Date.now() - 1000 * 60 * 120,
-    reactionsCount: 42,
+    kind: "challenges",
+    eyebrow: "Monad Testnet Duel",
+    title: "ETH Speed Clash Challenge",
+    description: "Ready for two-wallet on-chain duels with Pyth oracle settlement. Challenge open.",
+    timestamp: Date.now() - 1000 * 60 * 60,
+    stakeMon: 0.25,
+    asset: "ETH",
+    reactionsCount: 8,
+    isLiveChallenge: true,
   },
 ];
 
@@ -105,12 +94,84 @@ export function getSocialFeed(): SocialPost[] {
   return all.sort((a, b) => b.timestamp - a.timestamp);
 }
 
+export async function fetchSocialFeed(viewerAddress?: string): Promise<SocialPost[]> {
+  const localFeed = getSocialFeed();
+  if (typeof window === "undefined") return localFeed;
+
+  try {
+    const url = viewerAddress
+      ? `/api/social/feed?viewerAddress=${encodeURIComponent(viewerAddress)}`
+      : "/api/social/feed";
+    const res = await fetch(url);
+    if (!res.ok) return localFeed;
+
+    const data = await res.json();
+    if (!data.success || !Array.isArray(data.feed)) return localFeed;
+
+    const serverPosts: SocialPost[] = data.feed.map((ch: any) => ({
+      id: ch.id,
+      authorAddress: ch.authorAddress,
+      authorName: ch.authorName,
+      authorInitials: ch.authorInitials || "DU",
+      kind: ch.kind || "challenges",
+      eyebrow: ch.eyebrow || `${ch.asset || "BTC"} Duel Challenge`,
+      title: ch.title,
+      description: ch.description,
+      timestamp: ch.timestamp || Date.now(),
+      stakeMon: ch.stakeMon,
+      asset: ch.asset,
+      duelId: ch.duelId,
+      reactionsCount: ch.reactionsCount || 0,
+      isLiveChallenge: ch.isLiveChallenge !== false,
+    }));
+
+    // Convert real duel records into feed events
+    const duels = getDuelHistory();
+    const duelPosts: SocialPost[] = duels.map((d: DuelRecord) => {
+      const isWin = d.outcome === "WIN";
+      const short = `${d.playerAddress.slice(0, 6)}…${d.playerAddress.slice(-4)}`;
+      return {
+        id: `feed_duel_${d.id}`,
+        authorAddress: d.playerAddress,
+        authorName: short,
+        authorInitials: d.playerAddress.slice(2, 4).toUpperCase(),
+        kind: "duels" as const,
+        eyebrow: `${d.asset}/USD 10s Clash`,
+        title: isWin ? `Victory: +${(d.payout - d.stake).toFixed(2)} MON` : `Settled: ${d.outcome}`,
+        description: `Predicted ${d.direction} at $${d.strikePrice.toFixed(2)} (Settled: $${d.settledPrice.toFixed(2)}). Stake: ${d.stake} MON.`,
+        timestamp: d.timestamp,
+        stakeMon: d.stake,
+        asset: d.asset,
+        duelId: d.id,
+        reactionsCount: isWin ? 5 : 1,
+      };
+    });
+
+    const combined = [...serverPosts, ...duelPosts];
+    // Deduplicate by ID
+    const seen = new Set<string>();
+    const deduped: SocialPost[] = [];
+    for (const post of combined) {
+      if (!seen.has(post.id)) {
+        seen.add(post.id);
+        deduped.push(post);
+      }
+    }
+
+    return deduped.sort((a, b) => b.timestamp - a.timestamp);
+  } catch (err) {
+    console.warn("fetchSocialFeed network error, using local feed:", err);
+    return localFeed;
+  }
+}
+
 export function publishChallenge(
   authorAddress: string,
   title: string,
   description: string,
   asset: string = "BTC",
-  stakeMon: number = 0.5
+  stakeMon: number = 0.5,
+  duelId?: string
 ): SocialPost {
   const norm = normalizeAddress(authorAddress) || authorAddress;
   const newPost: SocialPost = {
@@ -125,6 +186,7 @@ export function publishChallenge(
     timestamp: Date.now(),
     stakeMon,
     asset,
+    duelId,
     reactionsCount: 0,
     isLiveChallenge: true,
   };
@@ -137,6 +199,20 @@ export function publishChallenge(
     } catch {
       // Storage restricted
     }
+
+    // Fire asynchronous background persist to server
+    fetch("/api/social/feed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        authorAddress: norm,
+        title,
+        description,
+        asset,
+        stakeMon,
+        duelId,
+      }),
+    }).catch((err) => console.warn("Failed to persist challenge to server:", err));
   }
 
   return newPost;
@@ -166,6 +242,15 @@ export function toggleLike(postId: string, userAddress?: string): boolean {
     // Storage restricted
   }
 
+  // Persist to server if wallet address exists
+  if (userAddress) {
+    fetch("/api/social/reactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId, userAddress }),
+    }).catch((err) => console.warn("Failed to sync like to server:", err));
+  }
+
   return !isLiked;
 }
 
@@ -177,6 +262,26 @@ export function getFollowingList(viewerAddress?: string): string[] {
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
+  }
+}
+
+export async function fetchFollowingList(viewerAddress?: string): Promise<string[]> {
+  const localList = getFollowingList(viewerAddress);
+  if (typeof window === "undefined" || !viewerAddress) return localList;
+
+  try {
+    const res = await fetch(`/api/social/follow?viewerAddress=${encodeURIComponent(viewerAddress)}`);
+    if (!res.ok) return localList;
+    const data = await res.json();
+    if (data.success && Array.isArray(data.following)) {
+      const merged = Array.from(new Set([...localList, ...data.following]));
+      const account = normalizeAddress(viewerAddress) || "guest";
+      localStorage.setItem(`${STORAGE_KEY_FOLLOWS}_${account}`, JSON.stringify(merged));
+      return merged;
+    }
+    return localList;
+  } catch {
+    return localList;
   }
 }
 
@@ -194,6 +299,12 @@ export function toggleFollowUser(viewerAddress?: string, targetAddress?: string)
   } catch {
     // Storage restricted
   }
+
+  fetch("/api/social/follow", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ viewerAddress: viewer, targetAddress: target }),
+  }).catch((err) => console.warn("Failed to sync follow to server:", err));
 
   return !isFollowing;
 }

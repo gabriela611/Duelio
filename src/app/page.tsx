@@ -15,6 +15,7 @@ import { normalizeAddress } from "@/domain/social/identity";
 export default function Home() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("home");
   const [profile, setProfile] = useState<SampleProfile | undefined>();
+  const [selectedDuelId, setSelectedDuelId] = useState<string | undefined>();
   const { login, logout, authenticated, ready, user } = usePrivy();
   const { wallets } = useWallets();
 
@@ -33,8 +34,9 @@ export default function Home() {
     }
   };
 
-  const navigate = (tab: ActiveTab) => {
+  const navigate = (tab: ActiveTab, duelId?: string) => {
     setProfile(undefined);
+    setSelectedDuelId(duelId);
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: "instant" });
   };
@@ -47,7 +49,7 @@ export default function Home() {
       onConnect={handleConnect}
     >
       {activeTab === "home" && <HomeView key={userAddress || "guest"} userAddress={userAddress} authenticated={authenticated} authReady={ready} onConnect={login} onNavigate={navigate} onProfile={(target) => { setProfile(target); setActiveTab("profile"); window.scrollTo({ top: 0, behavior: "instant" }); }} />}
-      {activeTab === "arena" && <ArenaView userAddress={userAddress} onConnect={handleConnect} />}
+      {activeTab === "arena" && <ArenaView key={selectedDuelId || "default"} userAddress={userAddress} onConnect={handleConnect} initialDuelId={selectedDuelId} />}
       {activeTab === "spectate" && <SpectatorWidget />}
       {activeTab === "leaderboard" && <LeaderboardView userAddress={userAddress} onBack={() => setActiveTab("arena")} />}
       {activeTab === "profile" && <ProfileBadge key={`${userAddress || "guest"}:${profile?.address || "own"}`} viewerAddress={userAddress} profile={profile} onConnect={login} onArena={() => navigate("arena")} onBack={() => navigate("home")} />}

@@ -44,13 +44,14 @@ import { keccak256, toHex, type Address, type Hex } from "viem";
 interface ArenaViewProps {
   userAddress?: string;
   onConnect?: () => void;
+  initialDuelId?: string | bigint;
 }
 
 type Direction = "HIGHER" | "LOWER";
 
 const QUICK_STAKES = ["0.05", "0.1", "0.25", "0.5"];
 
-export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) => {
+export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, initialDuelId }) => {
   const [selectedAsset, setSelectedAsset] = useState<SupportedAsset>("BTC");
   const { currentPrice, isLive, source } = usePriceStream(selectedAsset);
   const nativeBalance = useNativeBalance(userAddress);
@@ -67,7 +68,25 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
   const [stakeAmount, setStakeAmount] = useState<string>("0.1");
   const [matchDuration, setMatchDuration] = useState<number>(30);
   const [initialDirection, setInitialDirection] = useState<Direction>("HIGHER");
-  const [joinDuelInput, setJoinDuelInput] = useState<string>("");
+  const [joinDuelInput, setJoinDuelInput] = useState<string>(initialDuelId ? String(initialDuelId) : "");
+
+  // Auto-load initial duel from challenge if provided
+  useEffect(() => {
+    if (initialDuelId) {
+      setJoinDuelInput(String(initialDuelId));
+      try {
+        const idBig = BigInt(initialDuelId);
+        fetchDuelDetails(idBig).then((d) => {
+          if (d) {
+            setActiveDuel(d);
+            setActiveTab("ARENA");
+          }
+        });
+      } catch (err) {
+        console.warn("Invalid initialDuelId:", initialDuelId, err);
+      }
+    }
+  }, [initialDuelId]);
 
   // Transaction & Match Progress
   const [isProcessingTx, setIsProcessingTx] = useState(false);

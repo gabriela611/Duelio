@@ -21,10 +21,12 @@ import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 import type { ActiveTab } from "@/presentation/components/mobile-shell";
 import {
   getSocialFeed,
+  fetchSocialFeed,
   publishChallenge,
   toggleLike,
   getLikedPostIds,
   getFollowingList,
+  fetchFollowingList,
   type SocialPost,
 } from "@/domain/social/socialService";
 import type { SampleProfile } from "@/domain/social/sampleActivity";
@@ -37,7 +39,7 @@ interface HomeViewProps {
   authenticated: boolean;
   authReady: boolean;
   onConnect: () => void;
-  onNavigate: (tab: ActiveTab) => void;
+  onNavigate: (tab: ActiveTab, duelId?: string) => void;
   onProfile: (profile: SampleProfile) => void;
 }
 
@@ -65,10 +67,23 @@ export function HomeView({
   const [isPublishing, setIsPublishing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const loadSocialData = useCallback(() => {
+  const loadSocialData = useCallback(async () => {
+    // Immediate local cache
     setFeed(getSocialFeed());
     setLikedIds(getLikedPostIds(userAddress));
     setFollowingAddrs(getFollowingList(userAddress));
+
+    // Server-side persistent sync
+    try {
+      const [serverFeed, serverFollowing] = await Promise.all([
+        fetchSocialFeed(userAddress),
+        fetchFollowingList(userAddress),
+      ]);
+      setFeed(serverFeed);
+      setFollowingAddrs(serverFollowing);
+    } catch {
+      // Keep local feed on network error
+    }
   }, [userAddress]);
 
   useEffect(() => {
@@ -434,7 +449,7 @@ export function HomeView({
                         </div>
 
                         <button
-                          onClick={() => onNavigate("arena")}
+                          onClick={() => onNavigate("arena", post.duelId)}
                           className="px-3.5 py-1.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-semibold flex items-center gap-1 active:scale-95 transition-all shadow-soft"
                         >
                           <Swords size={13} />
@@ -472,7 +487,7 @@ export function HomeView({
                     </div>
 
                     <button
-                      onClick={() => onNavigate(post.kind === "duels" ? "arena" : "leaderboard")}
+                      onClick={() => onNavigate(post.kind === "duels" ? "arena" : "leaderboard", post.duelId)}
                       className="h-8 flex items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-text-primary bg-surface-secondary hover:bg-neutral-200 active:scale-95 transition-all"
                     >
                       <span>{post.kind === "duels" ? "Enter Arena" : "View Leaderboard"}</span>
