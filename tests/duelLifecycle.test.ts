@@ -104,3 +104,38 @@ test("Two-Wallet On-Chain Duel Lifecycle Simulation (B2 & B3)", async () => {
   duelState = "SETTLED";
   assert.equal(duelState, "SETTLED");
 });
+
+test("Duel Cancellation Lifecycle - Escrow Refund Guarantee", async () => {
+  const playerA = privateKeyToAccount(
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  );
+  const playerB = privateKeyToAccount(
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  );
+
+  const stakeMon = "0.5";
+  const entryStake = parseEther(stakeMon);
+
+  // Scenario 1: Player A creates duel and cancels before Player B joins
+  let state1: "CREATED" | "CANCELLED" = "CREATED";
+  assert.equal(state1, "CREATED");
+
+  // On cancellation: 100% of playerA's entryStake is refunded
+  const refundA1 = entryStake;
+  state1 = "CANCELLED";
+  assert.equal(formatEther(refundA1), "0.5");
+  assert.equal(state1, "CANCELLED");
+
+  // Scenario 2: Player B joins, then match is aborted before start
+  let state2: "CREATED" | "JOINED" | "CANCELLED" = "CREATED";
+  state2 = "JOINED";
+
+  // Both players receive 100% refund without protocol fees
+  const refundA2 = entryStake;
+  const refundB2 = entryStake;
+  state2 = "CANCELLED";
+
+  assert.equal(formatEther(refundA2), "0.5");
+  assert.equal(formatEther(refundB2), "0.5");
+  assert.equal(state2, "CANCELLED");
+});

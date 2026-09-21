@@ -29,6 +29,7 @@ import {
   createDuelOnChain,
   joinDuelOnChain,
   startDuelOnChain,
+  cancelDuelOnChain,
   commitOutcomeOnChain,
   settleAndClaimOnChain,
   fetchDuelDetails,
@@ -123,6 +124,17 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, in
   useEffect(() => {
     loadOpenDuels();
   }, []);
+
+  // Poll Open Duels Lobby when on the lobby tab
+  useEffect(() => {
+    if (activeTab !== "OPEN_DUELS") return;
+
+    const interval = setInterval(() => {
+      loadOpenDuels();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
   // Poll Active Duel State when waiting or active
   useEffect(() => {
@@ -262,6 +274,46 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, in
     } catch (err: any) {
       console.error("Join duel error:", err);
       setTxMessage(`Failed to join duel: ${err.shortMessage || err.message}`);
+    } finally {
+      setIsProcessingTx(false);
+    }
+  };
+
+  // Action: Cancel Duel and Refund Stake
+  const handleCancelDuel = async (duelId: bigint) => {
+    if (!userAddress) {
+      onConnect?.();
+      return;
+    }
+
+    setIsProcessingTx(true);
+    setTxMessage(`Cancelling Duel #${duelId} and refunding stake on Monad Testnet...`);
+    setLastTxHash(null);
+
+    try {
+      const walletClient = await getClient();
+      if (!walletClient) throw new Error("Wallet provider not connected");
+
+      setTxMessage("Confirm cancellation in your wallet...");
+      const txHash = await cancelDuelOnChain(
+        walletClient,
+        userAddress as Address,
+        duelId
+      );
+
+      setLastTxHash(txHash);
+      setTxMessage(`Duel #${duelId} cancelled! Escrow stake refunded to your wallet.`);
+
+      const updated = await fetchDuelDetails(duelId);
+      if (updated && activeDuel && activeDuel.id === duelId) {
+        setActiveDuel(updated);
+      }
+
+      nativeBalance.refresh();
+      await loadOpenDuels();
+    } catch (err: any) {
+      console.error("Cancel duel error:", err);
+      setTxMessage(`Failed to cancel duel: ${err.shortMessage || err.message}`);
     } finally {
       setIsProcessingTx(false);
     }
@@ -548,45 +600,90 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, in
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {openDuels.map((duel) => (
-                <div
-                  key={duel.id.toString()}
-                  className="p-4 rounded-2xl bg-surface-secondary/70 border border-border space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold text-text-primary">
-                      Duel #{duel.id.toString()}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-mono font-bold">
-                      WAITING
-                    </span>
-                  </div>
+              {openDuels.map((duel) => {
+                const isCreator = Boolean(
+                  userAddress && duel.playerA.toLowerCase() === userAddress.toLowerCase()
+                );
 
-                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                    <div>
-                      <span className="text-text-tertiary block text-[10px]">Creator</span>
-                      <span className="text-text-primary font-bold">
-                        {duel.playerA.slice(0, 6)}…{duel.playerA.slice(-4)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-text-tertiary block text-[10px]">Stake Escrow</span>
-                      <span className="text-monad-700 font-bold">
-                        {duel.entryStakeMon} MON
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleJoinDuel(duel)}
-                    disabled={isProcessingTx}
-                    className="w-full py-2.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-soft"
+                return (
+                  <div
+                    key={duel.id.toString()}
+                    className={`p-4 rounded-2xl border space-y-3 ${
+                      isCreator
+                        ? "bg-monad-50/20 border-monad-200"
+                        : "bg-surface-secondary/70 border-border"
+                    }`}
                   >
-                    <Swords className="w-3.5 h-3.5" />
-                    <span>Accept Challenge ({duel.entryStakeMon} MON)</span>
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-bold text-text-primary">
+                          Duel #{duel.id.toString()}
+                        </span>
+                        {isCreator && (
+                          <span className="px-2 py-0.5 rounded-full bg-monad-100 text-monad-800 text-[10px] font-mono font-bold border border-monad-300">
+                            YOUR DUEL
+                          </span>
+                        )}
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-mono font-bold">
+                        WAITING
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                      <div>
+                        <span className="text-text-tertiary block text-[10px]">Creator</span>
+                        <span className="text-text-primary font-bold">
+                          {isCreator ? "You" : `${duel.playerA.slice(0, 6)}…${duel.playerA.slice(-4)}`}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-text-tertiary block text-[10px]">Stake Escrow</span>
+                        <span className="text-monad-700 font-bold">
+                          {duel.entryStakeMon} MON
+                        </span>
+                      </div>
+                    </div>
+
+                    {isCreator ? (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleCancelDuel(duel.id)}
+                            disabled={isProcessingTx}
+                            className="flex-1 py-2.5 rounded-xl bg-negative/10 hover:bg-negative text-negative hover:text-white border border-negative/30 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-soft disabled:opacity-50"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Cancel & Refund Stake</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveDuel(duel);
+                              setActiveTab("ARENA");
+                            }}
+                            className="px-3.5 py-2.5 rounded-xl bg-surface hover:bg-surface-secondary border border-border text-xs font-bold text-text-primary active:scale-95 transition-all"
+                            title="Open in Arena"
+                          >
+                            Open
+                          </button>
+                        </div>
+                        <span className="text-[10px] text-text-tertiary block text-center">
+                          Cancel anytime to refund {duel.entryStakeMon} MON to your wallet.
+                        </span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleJoinDuel(duel)}
+                        disabled={isProcessingTx}
+                        className="w-full py-2.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-soft disabled:opacity-50"
+                      >
+                        <Swords className="w-3.5 h-3.5" />
+                        <span>Accept Challenge ({duel.entryStakeMon} MON)</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -799,23 +896,49 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, in
               </div>
 
               {activeDuel.state === "JOINED" ? (
-                <button
-                  onClick={handleStartDuel}
-                  disabled={isProcessingTx}
-                  className="w-full py-3.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all shadow-soft"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>Start Match Countdown (On-Chain)</span>
-                </button>
-              ) : (
-                <div className="text-xs text-text-secondary text-center space-y-2">
-                  <p>Share Duel ID <strong className="text-text-primary">#{activeDuel.id.toString()}</strong> with a challenger.</p>
+                <div className="space-y-2">
                   <button
-                    onClick={() => setActiveDuel(null)}
-                    className="text-xs text-text-tertiary hover:text-text-primary underline"
+                    onClick={handleStartDuel}
+                    disabled={isProcessingTx}
+                    className="w-full py-3.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all shadow-soft disabled:opacity-50"
                   >
-                    Close status and return to lobby
+                    <Zap className="w-4 h-4" />
+                    <span>Start Match Countdown (On-Chain)</span>
                   </button>
+                  <button
+                    onClick={() => handleCancelDuel(activeDuel.id)}
+                    disabled={isProcessingTx}
+                    className="w-full py-2.5 rounded-xl bg-surface-secondary hover:bg-negative/10 text-text-secondary hover:text-negative border border-border hover:border-negative/30 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Abort Match & Refund Escrows</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-xs text-text-secondary text-center space-y-1">
+                    <p>Share Duel ID <strong className="text-text-primary">#{activeDuel.id.toString()}</strong> with a challenger.</p>
+                    <p className="text-[11px] text-text-tertiary">Your {activeDuel.entryStakeMon} MON escrow is safely held in DuelArena contract.</p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                    <button
+                      onClick={() => handleCancelDuel(activeDuel.id)}
+                      disabled={isProcessingTx}
+                      className="flex-1 py-3 rounded-xl bg-negative/10 hover:bg-negative text-negative hover:text-white border border-negative/30 text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-soft disabled:opacity-50"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      <span>Cancel Duel & Refund Stake ({activeDuel.entryStakeMon} MON)</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab("OPEN_DUELS");
+                        loadOpenDuels();
+                      }}
+                      className="px-4 py-3 rounded-xl bg-surface-secondary hover:bg-surface border border-border text-xs font-bold text-text-secondary hover:text-text-primary active:scale-95 transition-all"
+                    >
+                      Open Match Lobby
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -866,8 +989,45 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect, in
             </div>
           )}
 
-          {/* MATCH STATE 4: NO ACTIVE DUEL -> CREATE OR JOIN */}
-          {(!activeDuel || activeDuel.state === "CANCELLED") && (
+          {/* MATCH STATE 4: CANCELLED RESULT */}
+          {activeDuel && activeDuel.state === "CANCELLED" && (
+            <div className="rounded-2xl bg-surface border border-border p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <XCircle className="w-5 h-5 text-text-tertiary" />
+                  <h3 className="text-sm font-bold text-text-primary uppercase tracking-wide">
+                    Duel #{activeDuel.id.toString()} Cancelled
+                  </h3>
+                </div>
+                <span className="text-xs font-mono font-bold text-text-secondary bg-surface-secondary px-2 py-0.5 rounded-full border border-border">
+                  CANCELLED
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-surface-secondary/70 border border-border text-xs space-y-1">
+                <p className="font-semibold text-text-primary">
+                  This duel was successfully cancelled on Monad Testnet.
+                </p>
+                <p className="text-text-secondary">
+                  The {activeDuel.entryStakeMon} MON escrow was refunded directly to your wallet.
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setActiveDuel(null);
+                  setStrikePrice(0);
+                  setTxMessage(null);
+                }}
+                className="w-full py-3 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold uppercase tracking-wider"
+              >
+                Create or Join Next Match
+              </button>
+            </div>
+          )}
+
+          {/* MATCH STATE 5: NO ACTIVE DUEL -> CREATE OR JOIN */}
+          {!activeDuel && (
             <div className="space-y-5">
               {/* Stake & Duration Selection */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

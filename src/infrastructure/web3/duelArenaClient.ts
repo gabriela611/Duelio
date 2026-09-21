@@ -141,18 +141,22 @@ export async function fetchOpenDuels(
       functionName: "duelCounter",
     });
 
-    const openDuels: OnChainDuel[] = [];
     const max = Number(counter);
-    const min = Math.max(1, max - limit + 1);
+    if (max <= 0) return [];
 
+    const min = Math.max(1, max - limit + 1);
+    const ids: bigint[] = [];
     for (let i = max; i >= min; i--) {
-      const duel = await fetchDuelDetails(BigInt(i), publicClient);
-      if (duel && duel.state === "CREATED") {
-        openDuels.push(duel);
-      }
+      ids.push(BigInt(i));
     }
 
-    return openDuels;
+    const fetched = await Promise.all(
+      ids.map((id) => fetchDuelDetails(id, publicClient))
+    );
+
+    return fetched.filter(
+      (duel): duel is OnChainDuel => duel !== null && duel.state === "CREATED"
+    );
   } catch (err) {
     console.error("Failed to fetch open duels:", err);
     return [];
@@ -182,7 +186,7 @@ export async function createDuelOnChain(
     chain: monadTestnet,
   });
 
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
 
   // Read counter after creation
   const counter = await publicClient.readContract({
@@ -204,8 +208,9 @@ export async function joinDuelOnChain(
   stakeMon: string
 ): Promise<Hex> {
   const address = DUEL_ARENA_CONTRACT_ADDRESS as Address;
+  const publicClient = getPublicDuelClient();
 
-  return walletClient.writeContract({
+  const txHash = await walletClient.writeContract({
     account,
     address,
     abi: DUEL_ARENA_ABI,
@@ -214,6 +219,9 @@ export async function joinDuelOnChain(
     value: parseEther(stakeMon),
     chain: monadTestnet,
   });
+
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  return txHash;
 }
 
 /**
@@ -225,8 +233,9 @@ export async function startDuelOnChain(
   duelId: bigint
 ): Promise<Hex> {
   const address = DUEL_ARENA_CONTRACT_ADDRESS as Address;
+  const publicClient = getPublicDuelClient();
 
-  return walletClient.writeContract({
+  const txHash = await walletClient.writeContract({
     account,
     address,
     abi: DUEL_ARENA_ABI,
@@ -234,6 +243,33 @@ export async function startDuelOnChain(
     args: [duelId],
     chain: monadTestnet,
   });
+
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  return txHash;
+}
+
+/**
+ * Cancels a created or joined duel and refunds deposited MON to participants
+ */
+export async function cancelDuelOnChain(
+  walletClient: WalletClient,
+  account: Address,
+  duelId: bigint
+): Promise<Hex> {
+  const address = DUEL_ARENA_CONTRACT_ADDRESS as Address;
+  const publicClient = getPublicDuelClient();
+
+  const txHash = await walletClient.writeContract({
+    account,
+    address,
+    abi: DUEL_ARENA_ABI,
+    functionName: "cancelDuel",
+    args: [duelId],
+    chain: monadTestnet,
+  });
+
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  return txHash;
 }
 
 /**
@@ -254,8 +290,9 @@ export async function commitOutcomeOnChain(
   }
 ): Promise<Hex> {
   const address = DUEL_ARENA_CONTRACT_ADDRESS as Address;
+  const publicClient = getPublicDuelClient();
 
-  return walletClient.writeContract({
+  const txHash = await walletClient.writeContract({
     account,
     address,
     abi: DUEL_ARENA_ABI,
@@ -272,6 +309,9 @@ export async function commitOutcomeOnChain(
     ],
     chain: monadTestnet,
   });
+
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  return txHash;
 }
 
 /**
@@ -283,8 +323,9 @@ export async function settleAndClaimOnChain(
   duelId: bigint
 ): Promise<Hex> {
   const address = DUEL_ARENA_CONTRACT_ADDRESS as Address;
+  const publicClient = getPublicDuelClient();
 
-  return walletClient.writeContract({
+  const txHash = await walletClient.writeContract({
     account,
     address,
     abi: DUEL_ARENA_ABI,
@@ -292,4 +333,7 @@ export async function settleAndClaimOnChain(
     args: [duelId],
     chain: monadTestnet,
   });
+
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  return txHash;
 }
