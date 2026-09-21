@@ -56,18 +56,28 @@ test("ShadowSocialRepository: getReplies matches genuine seed reply", async () =
   assert.equal(replyReport!.matched, true);
 });
 
-test("SocialRepository Factory: switches to ShadowSocialRepository when DATA_BACKEND=shadow", () => {
+test("SocialRepository Factory: switches repository based on DATA_BACKEND matrix", () => {
   const prevEnv = process.env.DATA_BACKEND;
   try {
     setSocialRepository(null);
     process.env.DATA_BACKEND = "shadow";
-    const repo = getSocialRepository();
-    assert.ok(repo instanceof ShadowSocialRepository);
+    const shadow = getSocialRepository();
+    assert.ok(shadow instanceof ShadowSocialRepository);
 
     setSocialRepository(null);
     process.env.DATA_BACKEND = "supabase";
     const supa = getSocialRepository();
     assert.ok(supa instanceof SupabaseSocialRepository);
+
+    setSocialRepository(null);
+    process.env.DATA_BACKEND = "file";
+    const file = getSocialRepository();
+    assert.ok(file instanceof FileSocialRepository);
+
+    setSocialRepository(null);
+    delete process.env.DATA_BACKEND;
+    const def = getSocialRepository();
+    assert.ok(def instanceof SupabaseSocialRepository);
   } finally {
     process.env.DATA_BACKEND = prevEnv;
     setSocialRepository(null);

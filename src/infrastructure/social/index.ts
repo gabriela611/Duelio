@@ -7,21 +7,22 @@ let activeSocialRepository: ISocialRepository | null = null;
 
 /**
  * Returns the active social repository instance.
- * - "supabase": SupabaseSocialRepository (direct cloud database)
+ * - "supabase" (default): SupabaseSocialRepository (canonical cloud database)
  * - "shadow": ShadowSocialRepository (primary file store, shadow reading Supabase)
- * - default: FileSocialRepository (.data/social_store.json)
+ * - "file": FileSocialRepository (.data/social_store.json - deprecated legacy store)
  */
 export function getSocialRepository(): ISocialRepository {
   if (!activeSocialRepository) {
-    if (process.env.DATA_BACKEND === "supabase") {
-      activeSocialRepository = new SupabaseSocialRepository();
-    } else if (process.env.DATA_BACKEND === "shadow") {
+    const backend = process.env.DATA_BACKEND || "supabase";
+    if (backend === "file") {
+      activeSocialRepository = new FileSocialRepository();
+    } else if (backend === "shadow") {
       activeSocialRepository = new ShadowSocialRepository(
         new FileSocialRepository(),
         new SupabaseSocialRepository()
       );
     } else {
-      activeSocialRepository = new FileSocialRepository();
+      activeSocialRepository = new SupabaseSocialRepository();
     }
   }
   return activeSocialRepository;

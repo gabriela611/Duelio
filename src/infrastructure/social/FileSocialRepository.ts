@@ -24,6 +24,11 @@ import {
 } from "./socialStore.ts";
 import { normalizeAddress } from "../../domain/social/identity.ts";
 
+/**
+ * @deprecated FileSocialRepository is superseded by SupabaseSocialRepository.
+ * Canonical cloud persistence is active by default (DATA_BACKEND=supabase).
+ * This class is retained strictly for offline development fallback and local fixture testing.
+ */
 export class FileSocialRepository implements ISocialRepository {
   async getFeed(viewerAddress?: string, tab: "forYou" | "challenges" = "forYou"): Promise<EnrichedFeedItem[]> {
     const normViewer = viewerAddress ? normalizeAddress(viewerAddress) : undefined;
