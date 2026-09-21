@@ -56,7 +56,7 @@ test("legacy settlement cannot load a treasury key or send a payout", () => {
   assert.match(routeSource, /"Cache-Control": "no-store"/);
 });
 
-test("practice arena has no MON transfer or settlement dispatch", () => {
+test("arena routes stakes through canonical DuelArena escrow and forbids legacy treasury settlement", () => {
   const arenaSource = readFileSync(
     path.join(
       repositoryRoot,
@@ -71,10 +71,10 @@ test("practice arena has no MON transfer or settlement dispatch", () => {
 
   assert.equal(existsSync(removedStakeSender), false);
   assert.doesNotMatch(arenaSource, /sendStakeToHouse/);
-  assert.doesNotMatch(arenaSource, /sendTransaction/);
   assert.doesNotMatch(arenaSource, /\/api\/clash\/settle/);
-  assert.match(arenaSource, /never requests a wallet signature or sends MON/);
-  assert.match(arenaSource, /no MON sent/);
+  assert.match(arenaSource, /createDuelOnChain/);
+  assert.match(arenaSource, /joinDuelOnChain/);
+  assert.match(arenaSource, /commitOutcomeOnChain/);
 });
 
 test("practice results never contribute to canonical reputation", () => {

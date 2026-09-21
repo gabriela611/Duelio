@@ -13,49 +13,71 @@ import {
   Radio,
   CheckCircle2,
   XCircle,
+  ExternalLink,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
+import confetti from "canvas-confetti";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 import { PriceSparkline } from "./PriceSparkline";
 import { SupportedAsset, usePriceStream } from "@/infrastructure/price-feed/usePriceStream";
 import { getPriceSourceLabel } from "@/infrastructure/price-feed/priceSource";
 import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
 import { formatNativeBalance } from "@/domain/social/identity";
-import { recordDuel, getPlayerStats } from "@/domain/duel/duelHistory";
+import { useDuelWalletClient } from "@/presentation/hooks/useDuelWalletClient";
+import {
+  createDuelOnChain,
+  joinDuelOnChain,
+  startDuelOnChain,
+  commitOutcomeOnChain,
+  settleAndClaimOnChain,
+  fetchDuelDetails,
+  fetchOpenDuels,
+  type OnChainDuel,
+} from "@/infrastructure/web3/duelArenaClient";
+import {
+  DUEL_ARENA_CONTRACT_ADDRESS,
+  monadTestnet,
+} from "@/infrastructure/web3/monadChain";
+import { keccak256, toHex, type Address, type Hex } from "viem";
 
 interface ArenaViewProps {
   userAddress?: string;
   onConnect?: () => void;
 }
 
-type DuelRoundState = "IDLE" | "COUNTDOWN" | "SETTLED";
 type Direction = "HIGHER" | "LOWER";
+
+const QUICK_STAKES = ["0.05", "0.1", "0.25", "0.5"];
 
 export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) => {
   const [selectedAsset, setSelectedAsset] = useState<SupportedAsset>("BTC");
   const { currentPrice, isLive, source } = usePriceStream(selectedAsset);
   const nativeBalance = useNativeBalance(userAddress);
+  const { getClient } = useDuelWalletClient();
   const isWalletConnected = Boolean(userAddress);
 
-  // Gamified 10-second Duel State
-  const [roundState, setRoundState] = useState<DuelRoundState>("IDLE");
-  const [playerPrediction, setPlayerPrediction] = useState<Direction | null>(null);
-  const [opponentPrediction, setOpponentPrediction] = useState<Direction | null>(null);
+  // Active Duel & Lobby States
+  const [activeDuel, setActiveDuel] = useState<OnChainDuel | null>(null);
+  const [openDuels, setOpenDuels] = useState<OnChainDuel[]>([]);
+  const [loadingOpenDuels, setLoadingOpenDuels] = useState(false);
+  const [activeTab, setActiveTab] = useState<"ARENA" | "OPEN_DUELS">("ARENA");
+
+  // Duel Creation Form
+  const [stakeAmount, setStakeAmount] = useState<string>("0.1");
+  const [matchDuration, setMatchDuration] = useState<number>(30);
+  const [initialDirection, setInitialDirection] = useState<Direction>("HIGHER");
+  const [joinDuelInput, setJoinDuelInput] = useState<string>("");
+
+  // Transaction & Match Progress
+  const [isProcessingTx, setIsProcessingTx] = useState(false);
+  const [txMessage, setTxMessage] = useState<string | null>(null);
+  const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [strikePrice, setStrikePrice] = useState<number>(0);
-  const [settledPrice, setSettledPrice] = useState<number>(0);
-  const [timeLeft, setTimeLeft] = useState<number>(10);
+  const [timeLeft, setTimeLeft] = useState<number>(30);
+  const [matchWinner, setMatchWinner] = useState<"ME" | "OPPONENT" | "DRAW" | null>(null);
 
-  // Player Stats & Session State - Loaded from persistent records
-  const [elo, setElo] = useState<number>(() => getPlayerStats(userAddress, "practice").elo);
-  const [streak, setStreak] = useState<number>(() => getPlayerStats(userAddress, "practice").streak);
-
-  useEffect(() => {
-    const stats = getPlayerStats(userAddress, "practice");
-    setElo(stats.elo);
-    setStreak(stats.streak);
-  }, [userAddress]);
-
-  // Round resolution data
-  const [roundWinner, setRoundWinner] = useState<"PLAYER" | "OPPONENT" | "DRAW" | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const displayBalance =
     isWalletConnected && nativeBalance.status === "ready" && nativeBalance.value !== undefined
@@ -66,111 +88,292 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
       ? "Unavailable"
       : null;
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const isBenchmark = source === "benchmark";
-
-  // Current difference during the active round
-  const currentDelta = strikePrice > 0 ? currentPrice - strikePrice : 0;
-  const currentDeltaPercent = strikePrice > 0 ? (currentDelta / strikePrice) * 100 : 0;
-  const isWinningLive =
-    playerPrediction === "HIGHER" ? currentDelta > 0 : currentDelta < 0;
-
-  // Practice rounds are intentionally local and never submit a wallet transaction.
-  const handleStartRound = (direction: Direction) => {
-    if (roundState !== "IDLE" || currentPrice <= 0) return;
-
-    const oppDir: Direction = direction === "HIGHER" ? "LOWER" : "HIGHER";
-    setPlayerPrediction(direction);
-    setOpponentPrediction(oppDir);
-    setStrikePrice(currentPrice);
-    setTimeLeft(10);
-    setRoundState("COUNTDOWN");
-    setRoundWinner(null);
+  // Load Open Duels from Contract
+  const loadOpenDuels = async () => {
+    setLoadingOpenDuels(true);
+    try {
+      const duels = await fetchOpenDuels(undefined, 8);
+      setOpenDuels(duels);
+    } catch (err) {
+      console.error("Failed to load open duels:", err);
+    } finally {
+      setLoadingOpenDuels(false);
+    }
   };
 
-  // 10-second Countdown Loop
   useEffect(() => {
-    if (roundState !== "COUNTDOWN") return;
+    loadOpenDuels();
+  }, []);
+
+  // Poll Active Duel State when waiting or active
+  useEffect(() => {
+    if (!activeDuel || activeDuel.state === "SETTLED" || activeDuel.state === "CANCELLED") return;
+
+    const interval = setInterval(async () => {
+      const updated = await fetchDuelDetails(activeDuel.id);
+      if (updated) {
+        setActiveDuel(updated);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [activeDuel]);
+
+  // Active Duel Countdown Loop
+  useEffect(() => {
+    if (!activeDuel || activeDuel.state !== "ACTIVE") {
+      if (timerRef.current) clearInterval(timerRef.current);
+      return;
+    }
+
+    if (strikePrice === 0 && currentPrice > 0) {
+      setStrikePrice(currentPrice);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const end = Number(activeDuel.endTime);
+    const remaining = Math.max(0, end - now);
+    setTimeLeft(remaining);
 
     timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          timerRef.current = null;
-          return 0;
-        }
-        return prev - 1;
-      });
+      const currentNow = Math.floor(Date.now() / 1000);
+      const diff = Math.max(0, end - currentNow);
+      setTimeLeft(diff);
+
+      if (diff <= 0) {
+        clearInterval(timerRef.current!);
+        timerRef.current = null;
+      }
     }, 1000);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [roundState]);
+  }, [activeDuel, currentPrice, strikePrice]);
 
-  // Settle Round at t = 0
-  useEffect(() => {
-    if (roundState === "COUNTDOWN" && timeLeft === 0) {
-      const finalPrice = currentPrice;
-      setSettledPrice(finalPrice);
-      setRoundState("SETTLED");
+  // Delta during active round
+  const currentDelta = strikePrice > 0 ? currentPrice - strikePrice : 0;
+  const currentDeltaPercent = strikePrice > 0 ? (currentDelta / strikePrice) * 100 : 0;
+  const isWinningLive =
+    initialDirection === "HIGHER" ? currentDelta > 0 : currentDelta < 0;
 
-      const delta = finalPrice - strikePrice;
-      let winner: "PLAYER" | "OPPONENT" | "DRAW" = "DRAW";
-      let eloDelta = 0;
-      let outcome: "WIN" | "LOSS" | "DRAW" = "DRAW";
+  // Action: Create Duel on Chain
+  const handleCreateDuel = async () => {
+    if (!userAddress) {
+      onConnect?.();
+      return;
+    }
 
-      if (delta === 0) {
-        winner = "DRAW";
-        outcome = "DRAW";
-      } else if (
-        (playerPrediction === "HIGHER" && delta > 0) ||
-        (playerPrediction === "LOWER" && delta < 0)
-      ) {
-        winner = "PLAYER";
-        outcome = "WIN";
-        eloDelta = 18;
-        setStreak((prev) => prev + 1);
-        setElo((prev) => prev + 18);
-      } else {
-        winner = "OPPONENT";
-        outcome = "LOSS";
-        eloDelta = -12;
-        setStreak(0);
-        setElo((prev) => Math.max(1000, prev - 12));
+    setIsProcessingTx(true);
+    setTxMessage("Preparing createDuel transaction on Monad Testnet...");
+    setLastTxHash(null);
+
+    try {
+      const walletClient = await getClient();
+      if (!walletClient) throw new Error("Wallet provider not connected");
+
+      const rulesHash = keccak256(toHex(`${selectedAsset}_${matchDuration}S_${initialDirection}`));
+      setTxMessage("Confirm transaction in your wallet...");
+
+      const { txHash, duelId } = await createDuelOnChain(
+        walletClient,
+        userAddress as Address,
+        matchDuration,
+        rulesHash,
+        stakeAmount
+      );
+
+      setLastTxHash(txHash);
+      setTxMessage(`Duel created on Monad Testnet! Tx: ${txHash.slice(0, 10)}…`);
+
+      if (duelId) {
+        const createdDuel = await fetchDuelDetails(duelId);
+        if (createdDuel) {
+          setActiveDuel(createdDuel);
+        }
+      }
+      nativeBalance.refresh();
+      loadOpenDuels();
+    } catch (err: any) {
+      console.error("Create duel error:", err);
+      setTxMessage(`Failed to create duel: ${err.shortMessage || err.message}`);
+    } finally {
+      setIsProcessingTx(false);
+    }
+  };
+
+  // Action: Join an Existing Duel
+  const handleJoinDuel = async (duelToJoin: OnChainDuel) => {
+    if (!userAddress) {
+      onConnect?.();
+      return;
+    }
+
+    if (duelToJoin.playerA.toLowerCase() === userAddress.toLowerCase()) {
+      setTxMessage("You cannot duel yourself! Please choose an opponent's duel.");
+      return;
+    }
+
+    setIsProcessingTx(true);
+    setTxMessage(`Joining Duel #${duelToJoin.id} with ${duelToJoin.entryStakeMon} MON...`);
+    setLastTxHash(null);
+
+    try {
+      const walletClient = await getClient();
+      if (!walletClient) throw new Error("Wallet provider not connected");
+
+      setTxMessage("Confirm transaction in your wallet...");
+      const txHash = await joinDuelOnChain(
+        walletClient,
+        userAddress as Address,
+        duelToJoin.id,
+        duelToJoin.entryStakeMon
+      );
+
+      setLastTxHash(txHash);
+      setTxMessage(`Joined Duel #${duelToJoin.id}! Waiting for match start.`);
+
+      const updated = await fetchDuelDetails(duelToJoin.id);
+      if (updated) {
+        setActiveDuel(updated);
+        setActiveTab("ARENA");
+      }
+      nativeBalance.refresh();
+      loadOpenDuels();
+    } catch (err: any) {
+      console.error("Join duel error:", err);
+      setTxMessage(`Failed to join duel: ${err.shortMessage || err.message}`);
+    } finally {
+      setIsProcessingTx(false);
+    }
+  };
+
+  // Action: Start Duel Timer
+  const handleStartDuel = async () => {
+    if (!activeDuel || !userAddress) return;
+
+    setIsProcessingTx(true);
+    setTxMessage("Starting match countdown on-chain...");
+    setLastTxHash(null);
+
+    try {
+      const walletClient = await getClient();
+      if (!walletClient) throw new Error("Wallet provider not connected");
+
+      const txHash = await startDuelOnChain(walletClient, userAddress as Address, activeDuel.id);
+      setLastTxHash(txHash);
+      setStrikePrice(currentPrice);
+
+      const updated = await fetchDuelDetails(activeDuel.id);
+      if (updated) {
+        setActiveDuel(updated);
+      }
+    } catch (err: any) {
+      console.error("Start duel error:", err);
+      setTxMessage(`Failed to start duel: ${err.shortMessage || err.message}`);
+    } finally {
+      setIsProcessingTx(false);
+    }
+  };
+
+  // Action: Commit Outcome & Claim Purse
+  const handleCommitAndClaim = async () => {
+    if (!activeDuel || !userAddress) return;
+
+    setIsProcessingTx(true);
+    setTxMessage("Requesting authoritative EIP-712 outcome evidence from referee...");
+    setLastTxHash(null);
+
+    try {
+      const walletClient = await getClient();
+      if (!walletClient) throw new Error("Wallet provider not connected");
+
+      // Determine winner based on strike vs settled price
+      const delta = currentPrice - strikePrice;
+      let declaredWinner: Address = "0x0000000000000000000000000000000000000000";
+
+      if (delta !== 0) {
+        // Player A selected initialDirection
+        const playerAWon = initialDirection === "HIGHER" ? delta > 0 : delta < 0;
+        declaredWinner = playerAWon ? activeDuel.playerA : activeDuel.playerB;
       }
 
-      setRoundWinner(winner);
+      const stateHash = keccak256(toHex(`DUEL_${activeDuel.id}_${currentPrice}`));
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
 
-      recordDuel({
-        playerAddress: userAddress || "0x0000000000000000000000000000000000000000",
-        asset: selectedAsset,
-        strikePrice,
-        settledPrice: finalPrice,
-        direction: playerPrediction || "HIGHER",
-        outcome,
-        stake: 0,
-        payout: 0,
-        eloDelta,
-        mode: "practice",
+      // 1. Fetch EIP-712 signature from referee
+      const refResponse = await fetch("/api/clash/referee", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          duelId: activeDuel.id.toString(),
+          winner: declaredWinner,
+          stateHash,
+          priceStart: Math.round(strikePrice * 100),
+          priceEnd: Math.round(currentPrice * 100),
+          deadline,
+        }),
       });
-    }
-  }, [timeLeft, roundState, currentPrice, strikePrice, playerPrediction, selectedAsset, userAddress]);
 
-  const handleReset = () => {
-    setRoundState("IDLE");
-    setPlayerPrediction(null);
-    setOpponentPrediction(null);
-    setStrikePrice(0);
-    setSettledPrice(0);
-    setTimeLeft(10);
-    setRoundWinner(null);
+      if (!refResponse.ok) {
+        const errData = await refResponse.json();
+        throw new Error(errData.message || "Referee rejected outcome evidence");
+      }
+
+      const { signature: refereeSig } = await refResponse.json();
+
+      setTxMessage("Committing verified outcome to DuelArena on Monad Testnet...");
+      const commitTx = await commitOutcomeOnChain(walletClient, userAddress as Address, {
+        duelId: activeDuel.id,
+        winner: declaredWinner,
+        stateHash,
+        priceStart: BigInt(Math.round(strikePrice * 100)),
+        priceEnd: BigInt(Math.round(currentPrice * 100)),
+        deadline: BigInt(deadline),
+        sigA: refereeSig,
+        sigB: refereeSig,
+      });
+
+      setTxMessage("Outcome committed! Settle and claim purse on-chain...");
+
+      const claimTx = await settleAndClaimOnChain(
+        walletClient,
+        userAddress as Address,
+        activeDuel.id
+      );
+
+      setLastTxHash(claimTx);
+
+      if (declaredWinner.toLowerCase() === userAddress.toLowerCase()) {
+        setMatchWinner("ME");
+        confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+        setTxMessage("🎉 VICTORY! Purse claimed directly to your wallet!");
+      } else if (declaredWinner === "0x0000000000000000000000000000000000000000") {
+        setMatchWinner("DRAW");
+        setTxMessage("Match ended in a DRAW. Escrow stake refunded.");
+      } else {
+        setMatchWinner("OPPONENT");
+        setTxMessage("Match settled. Opponent claimed the purse.");
+      }
+
+      const updated = await fetchDuelDetails(activeDuel.id);
+      if (updated) {
+        setActiveDuel(updated);
+      }
+      nativeBalance.refresh();
+    } catch (err: any) {
+      console.error("Commit and claim error:", err);
+      setTxMessage(`Error resolving duel: ${err.shortMessage || err.message}`);
+    } finally {
+      setIsProcessingTx(false);
+    }
   };
+
+  const isBenchmark = source === "benchmark";
 
   return (
     <div className="max-w-4xl mx-auto w-full space-y-5 pb-6">
-      {/* Practice Balance & User Card */}
+      {/* Status & Wallet Balance Card */}
       <section
         className="rounded-3xl bg-surface p-4 sm:p-6 border border-border shadow-soft flex flex-col sm:flex-row sm:items-center justify-between gap-4"
         aria-label="Duelist Status"
@@ -185,19 +388,16 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
               <h2 className="text-base font-bold text-text-primary">
                 {isWalletConnected ? `${userAddress!.slice(0, 6)}…${userAddress!.slice(-4)}` : "Guest Duelist"}
               </h2>
-              <span className="px-2 py-0.5 rounded-full bg-surface-secondary text-text-primary text-xs font-semibold font-mono border border-border">
-                {elo} Practice ELO
+              <span className="px-2 py-0.5 rounded-full bg-monad-50 text-monad-700 text-xs font-semibold font-mono border border-monad-200 flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-monad-600" />
+                <span>Monad Testnet 10143</span>
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-xs font-semibold font-mono flex items-center gap-1 border border-amber-200">
-                <Flame className="w-3 h-3 text-amber-500" />
-                <span>{streak} Practice Streak</span>
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-monad-50 text-monad-700 text-[10px] font-semibold font-mono border border-monad-200">
-                Practice Mode
+              <span className="px-2 py-0.5 rounded-full bg-surface-secondary text-text-secondary text-[11px] font-mono border border-border">
+                DuelArena Escrow
               </span>
             </div>
             <p className="break-all text-xs text-text-secondary font-mono mt-0.5">
-              {isWalletConnected ? userAddress : "No wallet required for practice"}
+              {isWalletConnected ? userAddress : "Connect your wallet to join or create real on-chain clashes"}
             </p>
           </div>
         </div>
@@ -243,7 +443,7 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
               className="px-3.5 py-2 rounded-xl bg-monad-600 hover:bg-monad-700 active:scale-95 transition-all text-xs font-semibold text-white flex items-center gap-1 shadow-soft"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Get Testnet MON</span>
+              <span>Get Faucet MON</span>
             </a>
           ) : (
             <button
@@ -256,90 +456,210 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
         </div>
       </section>
 
-      {/* Main 10-Second Duel Arena Card */}
-      <section
-        className="rounded-3xl bg-surface p-5 sm:p-7 border border-border shadow-soft space-y-6"
-        aria-label="Speed Clash Battle"
-      >
-        {/* Top Controls: Asset Selector & Oracle Indicator */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Asset Segmented Control */}
-          <div
-            className="inline-flex items-center bg-surface-secondary p-1 rounded-2xl border border-border"
-            role="tablist"
-            aria-label="Select duel currency"
+      {/* Navigation Tabs: Arena vs Open Duels Board */}
+      <div className="flex items-center justify-between border-b border-border pb-2">
+        <div className="inline-flex rounded-2xl bg-surface-secondary p-1 border border-border">
+          <button
+            onClick={() => setActiveTab("ARENA")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              activeTab === "ARENA"
+                ? "bg-surface text-text-primary shadow-soft"
+                : "text-text-secondary hover:text-text-primary"
+            }`}
           >
-            {(["BTC", "ETH", "SOL", "MON"] as const).map((asset) => (
-              <button
-                key={asset}
-                role="tab"
-                aria-selected={selectedAsset === asset}
-                disabled={roundState === "COUNTDOWN"}
-                onClick={() => setSelectedAsset(asset)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 flex items-center gap-1.5 active:scale-95 ${
-                  selectedAsset === asset
-                    ? "bg-surface text-text-primary shadow-soft font-bold"
-                    : "text-text-secondary hover:text-text-primary"
-                } disabled:opacity-60`}
-              >
-                <AssetLogo symbol={asset} size={15} />
-                <span>{asset}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Oracle Status Badge */}
-          <div className="flex items-center gap-1.5 text-xs font-mono text-text-secondary">
-            <Radio
-              className={`w-3.5 h-3.5 ${
-                isLive
-                  ? "text-positive animate-pulse"
-                  : isBenchmark
-                  ? "text-amber-500"
-                  : "text-text-tertiary"
-              }`}
-            />
-            <span className="font-medium">
-              {getPriceSourceLabel(source)}
-            </span>
-            <span className="text-[10px] text-text-tertiary">
-              · {isLive ? "Live" : "Not live"} · 10s Round
-            </span>
-          </div>
+            Live Arena
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("OPEN_DUELS");
+              loadOpenDuels();
+            }}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeTab === "OPEN_DUELS"
+                ? "bg-surface text-text-primary shadow-soft"
+                : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            <span>Open Match Lobby</span>
+            {openDuels.length > 0 && (
+              <span className="px-1.5 py-0.2 bg-monad-600 text-white rounded-full text-[10px]">
+                {openDuels.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Asset sparkline with an explicit source label */}
-        <PriceSparkline asset={selectedAsset} />
+        {activeDuel && (
+          <div className="text-xs font-mono text-monad-700 font-bold flex items-center gap-1">
+            <Zap className="w-3.5 h-3.5" />
+            <span>Active Duel #{activeDuel.id.toString()} ({activeDuel.state})</span>
+          </div>
+        )}
+      </div>
 
-        {/* BATTLE CANVAS */}
-        <div className="rounded-2xl bg-surface-secondary/70 border border-border p-5 space-y-5">
-          {/* Header: Duel Info & Opponent */}
+      {/* VIEW 1: OPEN DUELS LOBBY */}
+      {activeTab === "OPEN_DUELS" && (
+        <section className="rounded-3xl bg-surface p-5 sm:p-7 border border-border shadow-soft space-y-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span
-                className={`w-2.5 h-2.5 rounded-full ${
-                  isLive
-                    ? "bg-positive animate-pulse"
-                    : isBenchmark
-                    ? "bg-amber-500"
-                    : "bg-text-tertiary"
-                }`}
-              />
-              <span className="text-xs font-bold text-text-primary uppercase tracking-wide">
-                10-Second Battle Arena
-              </span>
+            <div>
+              <h3 className="text-base font-bold text-text-primary">Open On-Chain Matches</h3>
+              <p className="text-xs text-text-secondary">
+                Matches created by other traders waiting on Monad Testnet. Accept challenge to enter escrow.
+              </p>
+            </div>
+            <button
+              onClick={loadOpenDuels}
+              disabled={loadingOpenDuels}
+              className="p-2 rounded-xl border border-border hover:bg-surface-secondary text-text-secondary active:scale-95 transition-all"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingOpenDuels ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+
+          {openDuels.length === 0 ? (
+            <div className="py-12 text-center space-y-3">
+              <Swords className="w-8 h-8 text-text-tertiary mx-auto" />
+              <p className="text-sm font-semibold text-text-secondary">No open duels waiting right now.</p>
+              <button
+                onClick={() => setActiveTab("ARENA")}
+                className="px-4 py-2 rounded-xl bg-monad-600 text-white text-xs font-bold"
+              >
+                Create First Match
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {openDuels.map((duel) => (
+                <div
+                  key={duel.id.toString()}
+                  className="p-4 rounded-2xl bg-surface-secondary/70 border border-border space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono font-bold text-text-primary">
+                      Duel #{duel.id.toString()}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-mono font-bold">
+                      WAITING
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                    <div>
+                      <span className="text-text-tertiary block text-[10px]">Creator</span>
+                      <span className="text-text-primary font-bold">
+                        {duel.playerA.slice(0, 6)}…{duel.playerA.slice(-4)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-text-tertiary block text-[10px]">Stake Escrow</span>
+                      <span className="text-monad-700 font-bold">
+                        {duel.entryStakeMon} MON
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleJoinDuel(duel)}
+                    disabled={isProcessingTx}
+                    className="w-full py-2.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-soft"
+                  >
+                    <Swords className="w-3.5 h-3.5" />
+                    <span>Accept Challenge ({duel.entryStakeMon} MON)</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* VIEW 2: MAIN ARENA BATTLE CANVAS */}
+      {activeTab === "ARENA" && (
+        <section
+          className="rounded-3xl bg-surface p-5 sm:p-7 border border-border shadow-soft space-y-6"
+          aria-label="Speed Clash Battle"
+        >
+          {/* Top Controls: Asset Selector & Oracle Indicator */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Asset Segmented Control */}
+            <div
+              className="inline-flex items-center bg-surface-secondary p-1 rounded-2xl border border-border"
+              role="tablist"
+              aria-label="Select duel currency"
+            >
+              {(["BTC", "ETH", "SOL", "MON"] as const).map((asset) => (
+                <button
+                  key={asset}
+                  role="tab"
+                  aria-selected={selectedAsset === asset}
+                  disabled={activeDuel?.state === "ACTIVE"}
+                  onClick={() => setSelectedAsset(asset)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 flex items-center gap-1.5 active:scale-95 ${
+                    selectedAsset === asset
+                      ? "bg-surface text-text-primary shadow-soft font-bold"
+                      : "text-text-secondary hover:text-text-primary"
+                  } disabled:opacity-60`}
+                >
+                  <AssetLogo symbol={asset} size={15} />
+                  <span>{asset}</span>
+                </button>
+              ))}
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-text-secondary">
-              <Swords className="w-3.5 h-3.5 text-text-tertiary" />
-              <span className="font-semibold text-text-primary">Practice bot: CryptoKnight</span>
-              <span className="font-mono text-text-tertiary">(1820 ELO)</span>
+            {/* Oracle Status Badge */}
+            <div className="flex items-center gap-1.5 text-xs font-mono text-text-secondary">
+              <Radio
+                className={`w-3.5 h-3.5 ${
+                  isLive
+                    ? "text-positive animate-pulse"
+                    : isBenchmark
+                    ? "text-amber-500"
+                    : "text-text-tertiary"
+                }`}
+              />
+              <span className="font-medium">
+                {getPriceSourceLabel(source)}
+              </span>
+              <span className="text-[10px] text-text-tertiary">
+                · {isLive ? "Pyth Hermes Live" : "Simulated"}
+              </span>
             </div>
           </div>
 
-          {/* CLASH STATE: 1. COUNTDOWN IN PROGRESS */}
-          {roundState === "COUNTDOWN" && (
-            <div className="space-y-4 py-2">
+          {/* Asset sparkline with live pricing */}
+          <PriceSparkline asset={selectedAsset} />
+
+          {/* Feedback & Transaction Banner */}
+          {txMessage && (
+            <div className="p-3.5 rounded-2xl bg-surface-secondary border border-border text-xs flex items-center justify-between gap-2 animate-fade-in">
+              <span className="font-mono text-text-primary">{txMessage}</span>
+              {lastTxHash && (
+                <a
+                  href={`https://testnet.monadscan.com/tx/${lastTxHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-monad-600 hover:text-monad-700 font-bold flex items-center gap-1 text-xs shrink-0"
+                >
+                  <span>Monadscan</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* MATCH STATE 1: ACTIVE DUEL IN PROGRESS */}
+          {activeDuel && activeDuel.state === "ACTIVE" && (
+            <div className="rounded-2xl bg-surface-secondary/70 border border-border p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-text-primary uppercase tracking-wide flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-positive animate-pulse" />
+                  Live On-Chain Duel #{activeDuel.id.toString()}
+                </span>
+                <span className="text-xs font-mono font-bold text-monad-700">
+                  Purse: {(Number(activeDuel.entryStakeMon) * 2).toFixed(2)} MON
+                </span>
+              </div>
+
               {/* Timer Progress */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs font-bold">
@@ -351,17 +671,17 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                     {timeLeft}s
                   </span>
                 </div>
-
-                {/* Clean Progress Bar */}
                 <div className="w-full h-2.5 bg-surface rounded-full overflow-hidden border border-border">
                   <div
-                    className="h-full bg-text-primary transition-all duration-1000 ease-linear rounded-full"
-                    style={{ width: `${(timeLeft / 10) * 100}%` }}
+                    className="h-full bg-monad-600 transition-all duration-1000 ease-linear rounded-full"
+                    style={{
+                      width: `${(timeLeft / Number(activeDuel.duration || 30)) * 100}%`,
+                    }}
                   />
                 </div>
               </div>
 
-              {/* Price Delta & Live Momentum */}
+              {/* Live Prices and Momentum */}
               <div className="grid grid-cols-2 gap-3 pt-2">
                 <div className="p-3.5 rounded-2xl bg-surface border border-border space-y-1">
                   <span className="text-[11px] font-semibold text-text-tertiary uppercase block">
@@ -371,13 +691,13 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                     ${strikePrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                   <span className="text-[10px] text-text-secondary block">
-                    You chose: <strong className="text-text-primary">{playerPrediction}</strong>
+                    Your position: <strong className="text-text-primary">{initialDirection}</strong>
                   </span>
                 </div>
 
                 <div className="p-3.5 rounded-2xl bg-surface border border-border space-y-1">
                   <span className="text-[11px] font-semibold text-text-tertiary uppercase block">
-                    {isBenchmark ? "Simulated Delta" : "Live Delta"}
+                    Live Delta
                   </span>
                   <div className="flex items-baseline gap-1.5">
                     <span
@@ -397,157 +717,281 @@ export const ArenaView: React.FC<ArenaViewProps> = ({ userAddress, onConnect }) 
                   </div>
                   <span className="text-[10px] font-semibold">
                     {isWinningLive ? (
-                      <span className="text-positive font-bold">▲ You are winning</span>
+                      <span className="text-positive font-bold">▲ You are in the lead!</span>
                     ) : (
-                      <span className="text-negative font-bold">▼ Opponent leading</span>
+                      <span className="text-negative font-bold">▼ Opponent currently leading</span>
                     )}
                   </span>
                 </div>
               </div>
+
+              {timeLeft === 0 && (
+                <button
+                  onClick={handleCommitAndClaim}
+                  disabled={isProcessingTx}
+                  className="w-full py-3.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all shadow-soft"
+                >
+                  <Trophy className="w-4 h-4" />
+                  <span>Verify & Settle Match On-Chain</span>
+                </button>
+              )}
             </div>
           )}
 
-          {/* CLASH STATE: 2. SETTLED RESULT */}
-          {roundState === "SETTLED" && (
-            <div
-              className={`p-4 sm:p-5 rounded-2xl border ${
-                roundWinner === "PLAYER"
-                  ? "bg-surface border-positive/40"
-                  : roundWinner === "OPPONENT"
-                  ? "bg-surface border-negative/40"
-                  : "bg-surface border-border"
-              } space-y-3 animate-fade-in`}
-              role="alert"
-            >
+          {/* MATCH STATE 2: WAITING FOR OPPONENT OR READY TO START */}
+          {activeDuel && (activeDuel.state === "CREATED" || activeDuel.state === "JOINED") && (
+            <div className="rounded-2xl bg-surface-secondary/70 border border-border p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {roundWinner === "PLAYER" ? (
-                    <CheckCircle2 className="w-5 h-5 text-positive" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-negative" />
-                  )}
-                  <h3 className="text-sm font-bold text-text-primary uppercase tracking-wide">
-                    {roundWinner === "PLAYER"
-                      ? "VICTORY! YOU WON"
-                      : roundWinner === "OPPONENT"
-                      ? "DEFEAT! OPPONENT WON"
-                      : "ROUND DRAW"}
-                  </h3>
-                </div>
-
+                <span className="text-xs font-mono font-bold text-text-primary">
+                  Duel #{activeDuel.id.toString()}
+                </span>
                 <span
-                  className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full ${
-                    roundWinner === "PLAYER"
-                      ? "bg-positive/10 text-positive"
-                      : "bg-negative/10 text-negative"
+                  className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border ${
+                    activeDuel.state === "CREATED"
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-positive/10 text-positive border-positive/30"
                   }`}
                 >
-                  {roundWinner === "PLAYER"
-                    ? "+18 practice ELO"
-                    : roundWinner === "OPPONENT"
-                    ? "-12 practice ELO"
-                    : "No ELO change"}
+                  {activeDuel.state === "CREATED" ? "WAITING FOR OPPONENT" : "OPPONENT JOINED"}
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs font-mono pt-1 text-text-secondary">
-                <div>
-                  Strike Price:{" "}
-                  <span className="text-text-primary font-bold">
-                    ${strikePrice.toFixed(2)}
+              <div className="p-4 rounded-xl bg-surface border border-border space-y-2 text-xs font-mono">
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">Player A (Creator):</span>
+                  <span className="font-bold text-text-primary">
+                    {activeDuel.playerA.slice(0, 8)}…{activeDuel.playerA.slice(-6)}
                   </span>
                 </div>
-                <div>
-                  Final Price:{" "}
-                  <span className="text-text-primary font-bold">
-                    ${settledPrice.toFixed(2)}
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">Player B (Challenger):</span>
+                  <span className="font-bold text-text-primary">
+                    {activeDuel.playerB !== "0x0000000000000000000000000000000000000000"
+                      ? `${activeDuel.playerB.slice(0, 8)}…${activeDuel.playerB.slice(-6)}`
+                      : "Waiting for opponent to join…"}
+                  </span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-border">
+                  <span className="text-text-tertiary">Total Escrow Purse:</span>
+                  <span className="font-bold text-monad-700">
+                    {(Number(activeDuel.entryStakeMon) * 2).toFixed(2)} MON
                   </span>
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-border text-[11px] font-mono text-center text-text-secondary">
-                Practice only · no MON sent · no payout or on-chain settlement
+              {activeDuel.state === "JOINED" ? (
+                <button
+                  onClick={handleStartDuel}
+                  disabled={isProcessingTx}
+                  className="w-full py-3.5 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 active:scale-95 transition-all shadow-soft"
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>Start Match Countdown (On-Chain)</span>
+                </button>
+              ) : (
+                <div className="text-xs text-text-secondary text-center space-y-2">
+                  <p>Share Duel ID <strong className="text-text-primary">#{activeDuel.id.toString()}</strong> with a challenger.</p>
+                  <button
+                    onClick={() => setActiveDuel(null)}
+                    className="text-xs text-text-tertiary hover:text-text-primary underline"
+                  >
+                    Close status and return to lobby
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* MATCH STATE 3: SETTLED RESULT */}
+          {activeDuel && (activeDuel.state === "SETTLED" || activeDuel.state === "COMMITTED") && (
+            <div className="rounded-2xl bg-surface border border-border p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-positive" />
+                  <h3 className="text-sm font-bold text-text-primary uppercase tracking-wide">
+                    Duel #{activeDuel.id.toString()} Completed
+                  </h3>
+                </div>
+                <span className="text-xs font-mono font-bold text-positive bg-positive/10 px-2 py-0.5 rounded-full">
+                  SETTLED
+                </span>
+              </div>
+
+              <div className="p-3 rounded-xl bg-surface-secondary text-xs font-mono space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">Winner:</span>
+                  <span className="font-bold text-text-primary">
+                    {activeDuel.winner !== "0x0000000000000000000000000000000000000000"
+                      ? `${activeDuel.winner.slice(0, 8)}…${activeDuel.winner.slice(-6)}`
+                      : "DRAW (Refunds Issued)"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-tertiary">Purse Claimed:</span>
+                  <span className="font-bold text-monad-700">
+                    {(Number(activeDuel.entryStakeMon) * 1.96).toFixed(3)} MON (2% fee deducted)
+                  </span>
+                </div>
               </div>
 
               <button
-                onClick={handleReset}
-                className="w-full h-12 mt-2 rounded-xl bg-monad-600 hover:bg-monad-700 active:scale-95 transition-all text-xs font-bold text-white uppercase tracking-wider flex items-center justify-center gap-2 shadow-soft"
+                onClick={() => {
+                  setActiveDuel(null);
+                  setStrikePrice(0);
+                  setTxMessage(null);
+                }}
+                className="w-full py-3 rounded-xl bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold uppercase tracking-wider"
               >
-                <RefreshCw className="w-4 h-4" />
-                <span>Next Duel (10s)</span>
+                Create or Join Next Match
               </button>
             </div>
           )}
 
-          {/* CLASH STATE: 3. IDLE / READY (TWO TACTILE BUTTONS) */}
-          {roundState === "IDLE" && (
-            <div className="space-y-4">
-              <div className="p-3 rounded-2xl bg-monad-50 border border-monad-200 text-monad-800 text-xs text-center">
-                Practice mode uses {isBenchmark ? "simulated benchmark" : "live market"} prices but never requests a wallet signature or sends MON.
+          {/* MATCH STATE 4: NO ACTIVE DUEL -> CREATE OR JOIN */}
+          {(!activeDuel || activeDuel.state === "CANCELLED") && (
+            <div className="space-y-5">
+              {/* Stake & Duration Selection */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-text-secondary block">
+                    Select MON Stake (Escrow per player)
+                  </label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {QUICK_STAKES.map((stake) => (
+                      <button
+                        key={stake}
+                        onClick={() => setStakeAmount(stake)}
+                        className={`py-2 rounded-xl text-xs font-mono font-bold border transition-all ${
+                          stakeAmount === stake
+                            ? "bg-monad-600 text-white border-monad-600 shadow-soft"
+                            : "bg-surface-secondary border-border text-text-primary hover:border-text-secondary"
+                        }`}
+                      >
+                        {stake}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-text-secondary block">
+                    Match Duration
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setMatchDuration(30)}
+                      className={`py-2 rounded-xl text-xs font-mono font-bold border transition-all ${
+                        matchDuration === 30
+                          ? "bg-monad-600 text-white border-monad-600 shadow-soft"
+                          : "bg-surface-secondary border-border text-text-primary hover:border-text-secondary"
+                      }`}
+                    >
+                      30s Blitz
+                    </button>
+                    <button
+                      onClick={() => setMatchDuration(60)}
+                      className={`py-2 rounded-xl text-xs font-mono font-bold border transition-all ${
+                        matchDuration === 60
+                          ? "bg-monad-600 text-white border-monad-600 shadow-soft"
+                          : "bg-surface-secondary border-border text-text-primary hover:border-text-secondary"
+                      }`}
+                    >
+                      60s Standard
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <p className="text-xs text-text-secondary leading-relaxed text-center">
-                Will {selectedAsset} be higher or lower in 10 seconds? Pick your side:
-              </p>
+              {/* PREDICT INITIAL DIRECTION & CREATE DUEL */}
+              <div className="space-y-3">
+                <p className="text-xs text-text-secondary text-center">
+                  Predict direction for {selectedAsset} to deploy on-chain escrow duel:
+                </p>
 
-              {/* TWO LARGE NATIVE-STYLE ACTION BUTTONS: HIGHER & LOWER */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
-                {/* HIGHER BUTTON */}
-                <button
-                  onClick={() => handleStartRound("HIGHER")}
-                  disabled={currentPrice <= 0}
-                  className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-positive/30 hover:border-positive hover:bg-positive/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  <div className="flex items-center gap-3 text-left">
-                    <div className="w-10 h-10 rounded-xl bg-positive/10 text-positive flex items-center justify-center group-hover:scale-105 transition-transform">
-                      <TrendingUp className="w-5 h-5 stroke-[2.5]" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <button
+                    onClick={() => {
+                      setInitialDirection("HIGHER");
+                      handleCreateDuel();
+                    }}
+                    disabled={isProcessingTx || currentPrice <= 0}
+                    className="h-16 rounded-2xl bg-surface border-2 border-positive/30 hover:border-positive hover:bg-positive/5 active:scale-[0.98] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-3 text-left">
+                      <div className="w-10 h-10 rounded-xl bg-positive/10 text-positive flex items-center justify-center">
+                        <TrendingUp className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <span className="text-base font-bold text-text-primary block leading-tight">
+                          HIGHER
+                        </span>
+                        <span className="text-[11px] font-semibold text-positive block leading-tight mt-0.5">
+                          Deposit {stakeAmount} MON Escrow
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-base font-bold text-text-primary block leading-tight">
-                        HIGHER
-                      </span>
-                      <span className="text-[11px] font-semibold text-positive block leading-tight mt-0.5">
-                        Price rises in 10s
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono font-bold text-positive bg-positive/10 px-2 py-1 rounded-lg">
-                    Practice
-                  </span>
-                </button>
+                    <span className="text-xs font-mono font-bold text-positive bg-positive/10 px-2 py-1 rounded-lg">
+                      Create Duel
+                    </span>
+                  </button>
 
-                {/* LOWER BUTTON */}
-                <button
-                  onClick={() => handleStartRound("LOWER")}
-                  disabled={currentPrice <= 0}
-                  className="group relative h-14 sm:h-16 rounded-2xl bg-surface border-2 border-negative/30 hover:border-negative hover:bg-negative/5 active:scale-[0.97] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  <div className="flex items-center gap-3 text-left">
-                    <div className="w-10 h-10 rounded-xl bg-negative/10 text-negative flex items-center justify-center group-hover:scale-105 transition-transform">
-                      <TrendingDown className="w-5 h-5 stroke-[2.5]" />
+                  <button
+                    onClick={() => {
+                      setInitialDirection("LOWER");
+                      handleCreateDuel();
+                    }}
+                    disabled={isProcessingTx || currentPrice <= 0}
+                    className="h-16 rounded-2xl bg-surface border-2 border-negative/30 hover:border-negative hover:bg-negative/5 active:scale-[0.98] transition-all flex items-center justify-between px-5 shadow-soft disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-3 text-left">
+                      <div className="w-10 h-10 rounded-xl bg-negative/10 text-negative flex items-center justify-center">
+                        <TrendingDown className="w-5 h-5 stroke-[2.5]" />
+                      </div>
+                      <div>
+                        <span className="text-base font-bold text-text-primary block leading-tight">
+                          LOWER
+                        </span>
+                        <span className="text-[11px] font-semibold text-negative block leading-tight mt-0.5">
+                          Deposit {stakeAmount} MON Escrow
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-base font-bold text-text-primary block leading-tight">
-                        LOWER
-                      </span>
-                      <span className="text-[11px] font-semibold text-negative block leading-tight mt-0.5">
-                        Price drops in 10s
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono font-bold text-negative bg-negative/10 px-2 py-1 rounded-lg">
-                    Practice
-                  </span>
-                </button>
+                    <span className="text-xs font-mono font-bold text-negative bg-negative/10 px-2 py-1 rounded-lg">
+                      Create Duel
+                    </span>
+                  </button>
+                </div>
               </div>
 
-              <div className="pt-2 text-center text-[11px] font-mono text-text-tertiary">
-                Financial duels remain disabled until the DuelArena lifecycle is connected.
+              {/* JOIN BY ID QUICK BAR */}
+              <div className="pt-2 border-t border-border flex items-center gap-2">
+                <input
+                  type="number"
+                  placeholder="Enter Duel ID to join (e.g. 1)"
+                  value={joinDuelInput}
+                  onChange={(e) => setJoinDuelInput(e.target.value)}
+                  className="flex-1 h-11 px-3.5 rounded-xl bg-surface-secondary border border-border text-xs font-mono text-text-primary focus:outline-none focus:border-monad-600"
+                />
+                <button
+                  onClick={async () => {
+                    if (!joinDuelInput) return;
+                    const duel = await fetchDuelDetails(BigInt(joinDuelInput));
+                    if (duel) {
+                      handleJoinDuel(duel);
+                    } else {
+                      setTxMessage(`Duel #${joinDuelInput} not found on Monad Testnet.`);
+                    }
+                  }}
+                  disabled={!joinDuelInput || isProcessingTx}
+                  className="h-11 px-4 rounded-xl bg-surface-secondary hover:bg-surface border border-border text-xs font-bold text-text-primary active:scale-95 transition-all disabled:opacity-50"
+                >
+                  Join Match
+                </button>
               </div>
             </div>
           )}
-        </div>
-      </section>
+        </section>
+      )}
     </div>
   );
 };
