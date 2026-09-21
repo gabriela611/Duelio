@@ -6,14 +6,9 @@ import {
   ArrowUpRight,
   Eye,
   EyeOff,
-  Heart,
   RefreshCw,
   Swords,
-  Send,
-  CheckCircle2,
-  Flame,
-  Share2,
-  Check,
+  Plus,
 } from "lucide-react";
 import { formatNativeBalance, normalizeAddress } from "@/domain/social/identity";
 import { useNativeBalance } from "@/presentation/hooks/useNativeBalance";
@@ -22,13 +17,11 @@ import type { ActiveTab } from "@/presentation/components/mobile-shell";
 import {
   getSocialFeed,
   fetchSocialFeed,
-  publishChallenge,
-  toggleLike,
+  type SocialPost,
   getLikedPostIds,
   getRepostedPostIds,
   getFollowingList,
   fetchFollowingList,
-  type SocialPost,
 } from "@/domain/social/socialService";
 import type { SampleProfile } from "@/domain/social/sampleActivity";
 import { getPlayerStats } from "@/domain/duel/duelHistory";
@@ -56,7 +49,8 @@ export function HomeView({
 }: HomeViewProps) {
   const balance = useNativeBalance(userAddress);
   const [hidden, setHidden] = useState(false);
-  const [filter, setFilter] = useState<"all" | "following" | "challenges" | "duels">("all");
+  const [filter, setFilter] = useState<"all" | "challenges" | "duels" | "following">("all");
+  const [isComposerOpen, setIsComposerOpen] = useState(false);
 
   // Real social feed state
   const [feed, setFeed] = useState<SocialPost[]>([]);
@@ -95,11 +89,11 @@ export function HomeView({
     loadSocialData();
   };
 
-  const handleLike = (postId: string) => {
+  const handleLike = () => {
     setLikedIds(getLikedPostIds(userAddress));
   };
 
-  const handleRepost = (postId: string) => {
+  const handleRepost = () => {
     setRepostedIds(getRepostedPostIds(userAddress));
   };
 
@@ -139,7 +133,7 @@ export function HomeView({
     : "Live on Monad Testnet";
 
   return (
-    <div className="home-view mx-auto w-full max-w-2xl space-y-6 pb-6">
+    <div className="home-view mx-auto w-full max-w-2xl space-y-6 pb-12 relative">
       {/* Primary Balance Surface per design.md Section 3.3 */}
       <section
         className="rounded-3xl bg-surface p-5 sm:p-7 border border-border shadow-soft space-y-5"
@@ -221,84 +215,89 @@ export function HomeView({
         </div>
       </section>
 
-      {/* Twitter-Style Sticky Tabs & Timeline */}
+      {/* Zapper-Inspired Social Feed Container */}
       <section className="rounded-3xl border border-border bg-surface overflow-hidden shadow-soft" aria-label="Timeline feed">
-        {/* Sticky Header: For you / Following / Filters */}
-        <div className="sticky top-0 z-10 bg-surface/90 backdrop-blur-md border-b border-border/70">
-          <div className="flex items-center justify-around border-b border-border/40">
-            <button
-              type="button"
-              onClick={() => setFilter("all")}
-              className={`relative py-3.5 px-4 text-sm font-bold transition-all ${
-                filter === "all" ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary"
-              }`}
-            >
-              <span>For you</span>
-              {filter === "all" && (
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-monad-600 rounded-full" />
-              )}
-            </button>
+        {/* Sticky Header: Brand Title & Account Pill */}
+        <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur-md border-b border-border/70">
+          <div className="flex items-center justify-between px-5 pt-3.5 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-lg tracking-tight text-text-primary">
+                duelio
+              </span>
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-monad-50 text-monad-700 border border-monad-200">
+                Feed
+              </span>
+            </div>
 
-            <button
-              type="button"
-              onClick={() => setFilter("following")}
-              className={`relative py-3.5 px-4 text-sm font-bold transition-all ${
-                filter === "following" ? "text-text-primary" : "text-text-tertiary hover:text-text-secondary"
-              }`}
-            >
-              <span>Following</span>
-              {filter === "following" && (
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-1 bg-monad-600 rounded-full" />
-              )}
-            </button>
+            {/* Top Right Mini Account Pill (Zapper style: avatar + balance) */}
+            {authenticated && userAddress ? (
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-surface-secondary/70 border border-border/70 shadow-2xs text-xs font-semibold">
+                <div className="w-5 h-5 rounded-full bg-monad-600 text-white flex items-center justify-center text-[10px] font-mono font-bold">
+                  {userAddress.slice(2, 4).toUpperCase()}
+                </div>
+                <span className="font-mono text-text-primary">
+                  {balance.status === "ready" && balance.value !== undefined
+                    ? `${formatNativeBalance(balance.value)} MON`
+                    : "0.00 MON"}
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={onConnect}
+                className="px-3 py-1 rounded-full bg-monad-600/10 hover:bg-monad-600/20 text-monad-700 text-xs font-bold transition-colors"
+              >
+                Connect
+              </button>
+            )}
           </div>
 
-          {/* Sub-filters for quick category narrowing */}
-          <div className="flex items-center gap-1.5 px-4 py-2 overflow-x-auto no-scrollbar">
+          {/* Segmented Navigation Tabs (For You / Duels / Settled / Following) with Underline */}
+          <div className="flex items-center border-t border-border/40 px-2 overflow-x-auto no-scrollbar">
             {(
               [
-                { id: "all", label: "All Posts" },
-                { id: "challenges", label: "⚔️ Open Duels" },
-                { id: "duels", label: "🏆 Settled Matches" },
+                { id: "all", label: "For You" },
+                { id: "challenges", label: "Open Duels" },
+                { id: "duels", label: "Settled" },
+                { id: "following", label: "Following" },
               ] as const
-            ).map((sub) => {
-              const active = filter === sub.id;
+            ).map((tab) => {
+              const isActive = filter === tab.id;
               return (
                 <button
-                  key={sub.id}
+                  key={tab.id}
                   type="button"
-                  onClick={() => setFilter(sub.id as any)}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
-                    active
-                      ? "bg-monad-600 text-white font-bold shadow-sm"
-                      : "bg-surface-secondary text-text-secondary hover:text-text-primary hover:bg-neutral-200"
+                  onClick={() => setFilter(tab.id)}
+                  className={`relative py-3 px-4 text-sm font-semibold whitespace-nowrap transition-colors active:scale-95 ${
+                    isActive
+                      ? "text-text-primary font-bold"
+                      : "text-text-tertiary hover:text-text-secondary"
                   }`}
                 >
-                  {sub.label}
+                  <span>{tab.label}</span>
+                  {isActive && (
+                    <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-monad-600 rounded-full" />
+                  )}
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* Twitter Composer (if authenticated) */}
-        {authenticated && userAddress && (
-          <TweetComposer userAddress={userAddress} onPostCreated={handlePostCreated} />
-        )}
-
-        {/* Continuous Stream of Tweets */}
+        {/* Continuous Stream of Cards */}
         <div className="divide-y divide-border/60">
           {filteredFeed.length === 0 ? (
             <div className="py-14 px-6 text-center space-y-2">
               <p className="text-sm font-semibold text-text-primary">
                 {filter === "following"
                   ? "You aren't following anyone yet."
+                  : filter === "challenges"
+                  ? "No open arena challenges right now."
                   : "No posts in this stream."}
               </p>
               <p className="text-xs text-text-secondary max-w-sm mx-auto">
                 {filter === "following"
-                  ? "When you follow traders from duel matches or the leaderboard, their alpha and challenge calls will appear here."
-                  : "Be the first to post alpha or issue an open 30s arena challenge above!"}
+                  ? "When you follow traders from duel matches or the leaderboard, their alpha and challenges will appear here."
+                  : "Tap the + button below to share market alpha or issue an open 30s arena duel challenge!"}
               </p>
             </div>
           ) : (
@@ -318,6 +317,27 @@ export function HomeView({
           )}
         </div>
       </section>
+
+      {/* Floating Action Button (FAB) - Zapper style lilac/purple rounded squircle */}
+      {authenticated && userAddress && (
+        <button
+          type="button"
+          onClick={() => setIsComposerOpen(true)}
+          aria-label="New post or duel challenge"
+          className="fixed bottom-20 right-5 lg:bottom-8 lg:right-10 z-30 w-12 h-12 rounded-2xl bg-monad-600 hover:bg-monad-700 active:scale-90 text-white shadow-elevated flex items-center justify-center transition-all group"
+        >
+          <Plus size={22} strokeWidth={2.5} className="group-hover:rotate-90 transition-transform duration-200" />
+        </button>
+      )}
+
+      {/* Modal Composer Popup */}
+      <TweetComposer
+        userAddress={userAddress}
+        onPostCreated={handlePostCreated}
+        mode="modal"
+        isOpen={isComposerOpen}
+        onClose={() => setIsComposerOpen(false)}
+      />
     </div>
   );
 }

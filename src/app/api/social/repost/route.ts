@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getServerReposts,
-  toggleServerRepost,
-} from "@/infrastructure/social/socialStore";
+import { getSocialRepository } from "@/infrastructure/social";
 import { normalizeAddress } from "@/domain/social/identity";
+import { authenticateRequest } from "@/infrastructure/auth/privyServer";
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,7 +16,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { isReposted, count } = getServerReposts(postId, userAddress);
+    const repo = getSocialRepository();
+    const { isReposted, count } = await repo.getReposts(postId, userAddress ? normalizeAddress(userAddress) : undefined);
     return NextResponse.json({ success: true, isReposted, count });
   } catch (error: any) {
     return NextResponse.json(
@@ -30,8 +29,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await authenticateRequest(request, { required: false });
     const body = await request.json();
-    const { postId, userAddress } = body;
+    let { postId, userAddress } = body;
+
+    if (session?.walletAddress) {
+      if (userAddress && normalizeAddress(userAddress) !== session.walletAddress) {
+        return NextResponse.json(
+          { success: false, error: "FORBIDDEN: Wallet spoofing detected. Authenticated wallet does not match userAddress" },
+          { status: 403 }
+        );
+      }
+      userAddress = session.walletAddress;
+    }
 
     if (!postId || !userAddress) {
       return NextResponse.json(
@@ -48,7 +58,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = toggleServerRepost(postId, normAddress);
+    const repo = getSocialRepository();
+    const result = await repo.toggleRepost(postId, normAddress);
     return NextResponse.json({ success: true, ...result });
   } catch (error: any) {
     return NextResponse.json(

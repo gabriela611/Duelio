@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  addTweetReply,
-  getTweetReplies,
-} from "@/infrastructure/social/socialStore";
+import { getSocialRepository } from "@/infrastructure/social";
 import { normalizeAddress } from "@/domain/social/identity";
+import { authenticateRequest } from "@/infrastructure/auth/privyServer";
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,7 +15,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const replies = getTweetReplies(postId);
+    const repo = getSocialRepository();
+    const replies = await repo.getReplies(postId);
     return NextResponse.json({ success: true, replies });
   } catch (error: any) {
     return NextResponse.json(
@@ -29,8 +28,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await authenticateRequest(request, { required: false });
     const body = await request.json();
-    const { postId, authorAddress, content, authorName } = body;
+    let { postId, authorAddress, content, authorName } = body;
+
+    if (session?.walletAddress) {
+      if (authorAddress && normalizeAddress(authorAddress) !== session.walletAddress) {
+        return NextResponse.json(
+          { success: false, error: "FORBIDDEN: Wallet spoofing detected. Authenticated wallet does not match authorAddress" },
+          { status: 403 }
+        );
+      }
+      authorAddress = session.walletAddress;
+    }
 
     if (!postId || !authorAddress || !content) {
       return NextResponse.json(
@@ -47,7 +57,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const reply = addTweetReply(postId, {
+    const repo = getSocialRepository();
+    const reply = await repo.addReply(postId, {
       authorAddress: normAddress,
       authorName,
       content,

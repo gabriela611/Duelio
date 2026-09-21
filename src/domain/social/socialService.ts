@@ -1,4 +1,5 @@
-import { normalizeAddress, canFollow } from "./identity.ts";
+import { normalizeAddress, canFollow, toggleFollow } from "./identity.ts";
+import { getAuthHeaders } from "../../infrastructure/auth/clientToken.ts";
 import { getDuelHistory, type DuelRecord } from "../duel/duelHistory.ts";
 
 export interface TweetReply {
@@ -268,20 +269,22 @@ export function postChallenge(
   clientPosts.unshift(newPost);
 
   if (typeof window !== "undefined") {
-    fetch("/api/social/feed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        authorAddress: norm,
-        title,
-        description,
-        content: description,
-        asset,
-        stakeMon,
-        duelId,
-        kind: "challenges",
-      }),
-    }).catch((err) => console.warn("Failed to persist challenge to server:", err));
+    getAuthHeaders({ "Content-Type": "application/json" }).then((headers) => {
+      fetch("/api/social/feed", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          authorAddress: norm,
+          title,
+          description,
+          content: description,
+          asset,
+          stakeMon,
+          duelId,
+          kind: "challenges",
+        }),
+      }).catch((err) => console.warn("Failed to persist challenge to server:", err));
+    });
   }
 
   return newPost;
@@ -309,11 +312,13 @@ export function toggleLike(postId: string, userAddress?: string): boolean {
   }
 
   if (typeof window !== "undefined" && userAddress) {
-    fetch("/api/social/reactions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ postId, userAddress }),
-    }).catch((err) => console.warn("Failed to sync like to server:", err));
+    getAuthHeaders({ "Content-Type": "application/json" }).then((headers) => {
+      fetch("/api/social/reactions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ postId, userAddress }),
+      }).catch((err) => console.warn("Failed to sync like to server:", err));
+    });
   }
 
   return !isLiked;
@@ -363,11 +368,13 @@ export function toggleFollowUser(viewerAddress?: string, targetAddress?: string)
   }
 
   if (typeof window !== "undefined") {
-    fetch("/api/social/follow", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ viewerAddress: viewer, targetAddress: target }),
-    }).catch((err) => console.warn("Failed to sync follow to server:", err));
+    getAuthHeaders({ "Content-Type": "application/json" }).then((headers) => {
+      fetch("/api/social/follow", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ viewerAddress: viewer, targetAddress: target }),
+      }).catch((err) => console.warn("Failed to sync follow to server:", err));
+    });
   }
 
   return !isFollowing;
@@ -395,11 +402,13 @@ export function toggleRepost(postId: string, userAddress?: string): boolean {
   }
 
   if (typeof window !== "undefined" && userAddress) {
-    fetch("/api/social/repost", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ postId, userAddress }),
-    }).catch((err) => console.warn("Failed to sync repost to server:", err));
+    getAuthHeaders({ "Content-Type": "application/json" }).then((headers) => {
+      fetch("/api/social/repost", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ postId, userAddress }),
+      }).catch((err) => console.warn("Failed to sync repost to server:", err));
+    });
   }
 
   return !isReposted;
@@ -441,9 +450,10 @@ export async function postTweet(
 
   if (typeof window !== "undefined") {
     try {
+      const headers = await getAuthHeaders({ "Content-Type": "application/json" });
       const res = await fetch("/api/social/feed", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           authorAddress: norm,
           content,
@@ -491,9 +501,10 @@ export async function postReply(
 
   if (typeof window !== "undefined") {
     try {
+      const headers = await getAuthHeaders({ "Content-Type": "application/json" });
       const res = await fetch("/api/social/replies", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           postId,
           authorAddress: norm,

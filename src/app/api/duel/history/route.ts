@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAddress } from "viem";
-import {
-  saveServerDuelRecord,
-  getServerDuelHistory,
-  type DuelMode,
-} from "@/infrastructure/social/socialStore";
+import { getSocialRepository } from "@/infrastructure/social";
+import { type DuelMode } from "@/infrastructure/social/socialStore";
+import { authenticateRequest } from "@/infrastructure/auth/privyServer";
+import { normalizeAddress } from "@/domain/social/identity";
 
 export async function GET(req: NextRequest) {
   try {
@@ -12,7 +11,8 @@ export async function GET(req: NextRequest) {
     const playerAddress = searchParams.get("playerAddress") || undefined;
     const mode = (searchParams.get("mode") as DuelMode) || "onchain";
 
-    const history = getServerDuelHistory(playerAddress, mode);
+    const repo = getSocialRepository();
+    const history = await repo.getDuelHistory(playerAddress, mode);
     return NextResponse.json({ success: true, history });
   } catch (err: any) {
     return NextResponse.json(
@@ -24,8 +24,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await authenticateRequest(req, { required: false });
     const body = await req.json();
-    const {
+    let {
       playerAddress,
       asset,
       strikePrice,
@@ -38,6 +39,16 @@ export async function POST(req: NextRequest) {
       mode = "onchain",
       onChainDuelId,
     } = body;
+
+    if (session?.walletAddress) {
+      if (playerAddress && normalizeAddress(playerAddress) !== session.walletAddress) {
+        return NextResponse.json(
+          { success: false, error: "FORBIDDEN: Wallet spoofing detected. Authenticated wallet does not match playerAddress" },
+          { status: 403 }
+        );
+      }
+      playerAddress = session.walletAddress;
+    }
 
     if (!playerAddress || !isAddress(playerAddress)) {
       return NextResponse.json(
@@ -53,7 +64,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const record = saveServerDuelRecord({
+    const repo = getSocialRepository();
+    const record = await repo.saveDuelRecord({
       playerAddress,
       asset,
       strikePrice,
