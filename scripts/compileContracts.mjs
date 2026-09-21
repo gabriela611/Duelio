@@ -17,6 +17,7 @@ const input = {
     },
   },
   settings: {
+    viaIR: true,
     optimizer: {
       enabled: true,
       runs: 200,

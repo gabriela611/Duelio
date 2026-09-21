@@ -49,3 +49,6 @@ Thumbs.db
 
 # Local ODD planning artifacts
 odd/
+
+# Persistent server data
+.data/

@@ -6,6 +6,7 @@ import {
   PYTH_FEED_IDS,
   type PythSupportedSymbol,
 } from "./pythHermesService";
+import { isLivePriceSource, type PriceSource } from "./priceSource";
 
 export type SupportedAsset = "MON" | "BTC" | "ETH" | "SOL";
 
@@ -20,7 +21,7 @@ export interface PriceStreamState {
   changePercent: number;
   history: PricePoint[];
   isLive: boolean;
-  source: "pyth" | "coinbase" | "benchmark";
+  source: PriceSource;
 }
 
 // Baseline prices for instant hydration
@@ -54,7 +55,7 @@ export function usePriceStream(asset: SupportedAsset): PriceStreamState {
     return points;
   });
   const [isLive, setIsLive] = useState<boolean>(false);
-  const [source, setSource] = useState<"pyth" | "coinbase" | "benchmark">("benchmark");
+  const [source, setSource] = useState<PriceSource>("benchmark");
 
   const wsRef = useRef<WebSocket | null>(null);
   const simIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -65,6 +66,8 @@ export function usePriceStream(asset: SupportedAsset): PriceStreamState {
     const base = BASELINE_PRICES[asset];
     setInitialPrice(base);
     setCurrentPrice(base);
+    setIsLive(false);
+    setSource("benchmark");
 
     // Re-seed history curve on asset switch
     const now = Date.now();
@@ -78,10 +81,10 @@ export function usePriceStream(asset: SupportedAsset): PriceStreamState {
     }
     setHistory(seeded);
 
-    const updatePricePoint = (newPrice: number, newSource: "pyth" | "coinbase" | "benchmark") => {
+    const updatePricePoint = (newPrice: number, newSource: PriceSource) => {
       if (isCancelled) return;
       setCurrentPrice(newPrice);
-      setIsLive(true);
+      setIsLive(isLivePriceSource(newSource));
       setSource(newSource);
       setHistory((prev) => {
         const next = [...prev, { time: Date.now(), price: newPrice }];

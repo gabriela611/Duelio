@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test indexer/tests/EventHandlers.test.ts tests/social.test.ts tests/pyth.test.ts tests/contracts.test.ts tests/settlement.test.ts"
+    "test": "node --experimental-strip-types --test indexer/tests/EventHandlers.test.ts tests/social.test.ts tests/pyth.test.ts tests/contracts.test.ts tests/settlement.test.ts tests/duelLifecycle.test.ts"
   },
   "dependencies": {
     "@privy-io/react-auth": "^1.98.0",

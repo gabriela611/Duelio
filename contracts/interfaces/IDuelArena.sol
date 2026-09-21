@@ -26,6 +26,8 @@ interface IDuelArena {
         uint256 totalPredictionPoolA;
         uint256 totalPredictionPoolB;
         bool traderRewardsClaimed;
+        bool playerAClaimed;
+        bool playerBClaimed;
     }
 
     struct Prediction {
@@ -45,6 +47,7 @@ interface IDuelArena {
     event PredictionClaimed(uint256 indexed duelId, address indexed predictor, uint256 payout);
     event DuelCancelled(uint256 indexed duelId, string reason);
     event TreasuryUpdated(address indexed newTreasury);
+    event RefereeUpdated(address indexed newReferee);
     event FeesDistributed(address indexed treasury, uint256 amount);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
 
@@ -58,6 +61,7 @@ interface IDuelArena {
         bytes32 stateHash,
         uint256 priceStart,
         uint256 priceEnd,
+        uint256 deadline,
         bytes calldata sigA,
         bytes calldata sigB
     ) external;
@@ -66,7 +70,9 @@ interface IDuelArena {
     function claimPrediction(uint256 duelId) external;
     function cancelDuel(uint256 duelId) external;
     function setTreasury(address newTreasury) external;
+    function setReferee(address newReferee) external;
     function withdrawFees(address payable recipient) external;
     function treasury() external view returns (address);
+    function referee() external view returns (address);
     function accumulatedFees() external view returns (uint256);
 }

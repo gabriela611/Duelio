@@ -13,6 +13,7 @@ contract DuelArena is IDuelArena {
     uint256 public duelCounter;
     address public owner;
     address public override treasury;
+    address public override referee;
     uint256 public override accumulatedFees;
     bool private locked;
 
@@ -26,6 +27,18 @@ contract DuelArena is IDuelArena {
     uint256 public constant MAX_DURATION = 15 minutes;
     uint256 public constant PLATFORM_FEE_BPS = 200; // 2% protocol fee (200 / 10000)
     uint256 public constant BPS_DIVISOR = 10000;
+
+    // EIP-712 Typed Data Constants
+    bytes32 public constant OUTCOME_TYPEHASH = keccak256(
+        "Outcome(uint256 duelId,address winner,bytes32 stateHash,uint256 priceStart,uint256 priceEnd,uint256 deadline)"
+    );
+
+    bytes32 public constant EIP712_DOMAIN_TYPEHASH = keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    );
+
+    bytes32 public immutable DOMAIN_NAME_HASH = keccak256(bytes("DuelArena"));
+    bytes32 public immutable DOMAIN_VERSION_HASH = keccak256(bytes("1"));
 
     modifier nonReentrant() {
         require(!locked, "REENTRANCY_GUARD");
@@ -42,6 +55,47 @@ contract DuelArena is IDuelArena {
     constructor(address _initialTreasury) {
         owner = msg.sender;
         treasury = _initialTreasury != address(0) ? _initialTreasury : msg.sender;
+        referee = msg.sender;
+    }
+
+    /**
+     * @notice Returns the EIP-712 Domain Separator dynamically bound to chainId and this contract address.
+     */
+    function domainSeparator() public view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                EIP712_DOMAIN_TYPEHASH,
+                DOMAIN_NAME_HASH,
+                DOMAIN_VERSION_HASH,
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    /**
+     * @notice Computes the EIP-712 digest for duel outcome commit evidence.
+     */
+    function hashOutcome(
+        uint256 duelId,
+        address winner,
+        bytes32 stateHash,
+        uint256 priceStart,
+        uint256 priceEnd,
+        uint256 deadline
+    ) public view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                OUTCOME_TYPEHASH,
+                duelId,
+                winner,
+                stateHash,
+                priceStart,
+                priceEnd,
+                deadline
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
     }
 
     /**
@@ -52,6 +106,16 @@ contract DuelArena is IDuelArena {
         require(newTreasury != address(0), "INVALID_TREASURY");
         treasury = newTreasury;
         emit TreasuryUpdated(newTreasury);
+    }
+
+    /**
+     * @notice Updates the designated oracle referee address.
+     * @param newReferee The address of the new referee signer.
+     */
+    function setReferee(address newReferee) external override onlyOwner {
+        require(newReferee != address(0), "INVALID_REFEREE");
+        referee = newReferee;
+        emit RefereeUpdated(newReferee);
     }
 
     /**
@@ -164,13 +228,32 @@ contract DuelArena is IDuelArena {
         emit PredictionPlaced(duelId, msg.sender, predictedWinner, msg.value);
     }
 
+    function _verifyOutcomeSignatures(
+        bytes32 digest,
+        bytes calldata sigA,
+        bytes calldata sigB,
+        address playerA,
+        address playerB
+    ) internal view returns (bool) {
+        address recoveredA = recoverSigner(digest, sigA);
+        address recoveredB = recoverSigner(digest, sigB);
+
+        bool mutualConsent = (recoveredA == playerA && recoveredB == playerB);
+        bool refereeAuthorized = (referee != address(0) && (recoveredA == referee || recoveredB == referee));
+
+        return (mutualConsent || refereeAuthorized);
+    }
+
     /**
-     * @notice Commits the off-chain game outcome with signed evidence or referee proof.
+     * @notice Commits the off-chain game outcome with EIP-712 signed evidence.
+     * @dev Outcome must be signed mutually by both players OR by the authorized referee.
+     * Zero msg.sender owner bypass. Replay protected by chainid, verifying contract, and deadline.
      * @param duelId ID of the duel.
-     * @param winner Declared winner address.
+     * @param winner Declared winner address, or address(0) in case of a DRAW.
      * @param stateHash Hash of the deterministic game transcript.
      * @param priceStart Verified start price snapshot.
      * @param priceEnd Verified end price snapshot.
+     * @param deadline Expiration timestamp for the signatures.
      * @param sigA Signature of Player A or referee.
      * @param sigB Signature of Player B or referee.
      */
@@ -180,33 +263,24 @@ contract DuelArena is IDuelArena {
         bytes32 stateHash,
         uint256 priceStart,
         uint256 priceEnd,
+        uint256 deadline,
         bytes calldata sigA,
         bytes calldata sigB
     ) external override {
         Duel storage duel = duels[duelId];
         require(duel.state == DuelState.ACTIVE, "DUEL_NOT_ACTIVE");
-        require(winner == duel.playerA || winner == duel.playerB, "INVALID_WINNER");
-
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                "\x19Ethereum Signed Message:\n32",
-                keccak256(abi.encode(duelId, winner, stateHash, priceStart, priceEnd))
-            )
+        require(block.timestamp >= duel.endTime, "DUEL_NOT_FINISHED");
+        require(block.timestamp <= deadline, "SIGNATURE_EXPIRED");
+        require(
+            winner == address(0) || winner == duel.playerA || winner == duel.playerB,
+            "INVALID_WINNER"
         );
 
-        address recoveredA = recoverSigner(messageHash, sigA);
-        address recoveredB = recoverSigner(messageHash, sigB);
-
-        // Verification: Either both players signed the mutual outcome hash, or authorized owner/referee signed
-        bool mutualConsent = (recoveredA == duel.playerA && recoveredB == duel.playerB);
-        bool refereeAuthorized = (recoveredA == owner || recoveredB == owner || msg.sender == owner);
-
-        require(mutualConsent || refereeAuthorized, "INVALID_SIGNATURES");
-
-        // Prevent premature outcome manipulation: match duration must expire unless authorized referee/owner intervenes
-        if (!refereeAuthorized) {
-            require(block.timestamp >= duel.endTime, "DUEL_NOT_FINISHED");
-        }
+        bytes32 digest = hashOutcome(duelId, winner, stateHash, priceStart, priceEnd, deadline);
+        require(
+            _verifyOutcomeSignatures(digest, sigA, sigB, duel.playerA, duel.playerB),
+            "INVALID_SIGNATURES"
+        );
 
         duel.winner = winner;
         duel.finalStateHash = stateHash;
@@ -220,10 +294,21 @@ contract DuelArena is IDuelArena {
      * @param duelId ID of the duel.
      */
     function settleDuel(uint256 duelId) external override nonReentrant {
+        _settleDuel(duelId);
+    }
+
+    function _settleDuel(uint256 duelId) internal {
         Duel storage duel = duels[duelId];
         require(duel.state == DuelState.COMMITTED, "OUTCOME_NOT_COMMITTED");
 
         duel.state = DuelState.SETTLED;
+
+        if (duel.winner == address(0)) {
+            // DRAW: No platform fees, pools refunded in full
+            emit PredictionPoolClosed(duelId, duel.totalPredictionPoolA, duel.totalPredictionPoolB);
+            emit DuelSettled(duelId, address(0), 0, 0);
+            return;
+        }
 
         uint256 totalTraderPool = duel.entryStake * 2;
         uint256 protocolFee = (totalTraderPool * PLATFORM_FEE_BPS) / BPS_DIVISOR;
@@ -238,12 +323,35 @@ contract DuelArena is IDuelArena {
     }
 
     /**
-     * @notice Winning trader claims their purse, routing protocol fees to the house treasury.
+     * @notice Winning trader claims their purse, or participants claim refund in case of DRAW.
      * @param duelId ID of the duel.
      */
     function claimReward(uint256 duelId) external override nonReentrant {
+        _claimReward(duelId);
+    }
+
+    function _claimReward(uint256 duelId) internal {
         Duel storage duel = duels[duelId];
         require(duel.state == DuelState.SETTLED, "DUEL_NOT_SETTLED");
+
+        if (duel.winner == address(0)) {
+            // DRAW: each participant can claim refund of their entry stake
+            require(msg.sender == duel.playerA || msg.sender == duel.playerB, "NOT_PARTICIPANT");
+            if (msg.sender == duel.playerA) {
+                require(!duel.playerAClaimed, "ALREADY_CLAIMED");
+                duel.playerAClaimed = true;
+            } else {
+                require(!duel.playerBClaimed, "ALREADY_CLAIMED");
+                duel.playerBClaimed = true;
+            }
+
+            (bool refundOk, ) = payable(msg.sender).call{value: duel.entryStake}("");
+            require(refundOk, "TRANSFER_FAILED");
+
+            emit RewardClaimed(duelId, msg.sender, duel.entryStake);
+            return;
+        }
+
         require(msg.sender == duel.winner, "NOT_WINNER");
         require(!duel.traderRewardsClaimed, "ALREADY_CLAIMED");
 
@@ -274,8 +382,19 @@ contract DuelArena is IDuelArena {
     }
 
     /**
-     * @notice Winning spectators claim their pro-rata prediction rewards.
-     * @dev If no spectator backed the winner, division-by-zero is avoided and original stakes are refunded.
+     * @notice Convenience helper to settle and claim a duel in a single transaction.
+     * @param duelId ID of the duel.
+     */
+    function settleAndClaim(uint256 duelId) external nonReentrant {
+        Duel storage duel = duels[duelId];
+        if (duel.state == DuelState.COMMITTED) {
+            _settleDuel(duelId);
+        }
+        _claimReward(duelId);
+    }
+
+    /**
+     * @notice Winning spectators claim their pro-rata prediction rewards (or refund in DRAW).
      * @param duelId ID of the duel.
      */
     function claimPrediction(uint256 duelId) external override nonReentrant {
@@ -293,8 +412,8 @@ contract DuelArena is IDuelArena {
         uint256 totalPool = winningPool + losingPool;
 
         uint256 payout;
-        if (winningPool == 0) {
-            // Division by zero safeguard: If no spectator backed the winner, refund original stakes
+        if (duel.winner == address(0) || winningPool == 0) {
+            // DRAW or unbacked winner safeguard: refund original prediction stake
             payout = userPred.amount;
         } else {
             require(userPred.predictedWinner == duel.winner, "LOST_PREDICTION");
@@ -339,10 +458,15 @@ contract DuelArena is IDuelArena {
         bytes32 s;
         uint8 v;
 
-        assembly {
+        assembly ("memory-safe") {
             r := mload(add(signature, 32))
             s := mload(add(signature, 64))
             v := byte(0, mload(add(signature, 96)))
+        }
+
+        // EIP-2 malleability protection
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return address(0);
         }
 
         if (v < 27) {

@@ -112,6 +112,17 @@ async function main() {
     fs.writeFileSync(envLocalPath, updated);
     console.log(`Updated NEXT_PUBLIC_DUEL_ARENA_ADDRESS in .env.local to ${deployedAddress}`);
   }
+
+  // Update indexer/config.yaml
+  const indexerConfigPath = path.resolve("./indexer/config.yaml");
+  if (deployedAddress && fs.existsSync(indexerConfigPath)) {
+    const updatedYaml = fs.readFileSync(indexerConfigPath, "utf8").replace(
+      /address:\s*\n\s*-\s*"0x[a-fA-F0-9]{40}"/,
+      `address:\n          - "${deployedAddress}"`
+    );
+    fs.writeFileSync(indexerConfigPath, updatedYaml);
+    console.log(`Updated contract address in indexer/config.yaml to ${deployedAddress}`);
+  }
 }
 
 main().catch((err) => {

@@ -65,3 +65,187 @@ test("RPC failures are explicit errors, not fabricated zero balances", async () 
   assert.equal(states.at(-1)?.status, "error");
   assert.equal(states.at(-1)?.value, undefined);
 });
+
+test("social store persists challenges and formats authors correctly", async () => {
+  const { getAllChallenges, saveChallenge } = await import("../src/infrastructure/social/socialStore.ts");
+  const initialCount = getAllChallenges().length;
+
+  const saved = saveChallenge({
+    authorAddress: viewer,
+    eyebrow: "BTC Duel Challenge",
+    title: "Can you beat my prediction?",
+    description: "30s arena clash on Monad Testnet",
+    kind: "challenges",
+    asset: "BTC",
+    stakeMon: 0.25,
+    authorInitials: "AB",
+    duelId: "42",
+  });
+
+  assert.equal(saved.authorAddress, viewer.toLowerCase());
+  assert.equal(saved.duelId, "42");
+  assert.equal(saved.isLiveChallenge, true);
+
+  const updated = getAllChallenges();
+  assert.equal(updated.length, initialCount + 1);
+  assert.equal(updated[0].id, saved.id);
+});
+
+test("social store reaction toggles correctly track user likes", async () => {
+  const { toggleServerReaction, getServerReactions } = await import("../src/infrastructure/social/socialStore.ts");
+  const postId = "test-post-1";
+
+  const firstLike = toggleServerReaction(postId, viewer);
+  assert.equal(firstLike.isLiked, true);
+  assert.equal(firstLike.count, 1);
+
+  const queryAfterLike = getServerReactions(postId, viewer);
+  assert.equal(queryAfterLike.isLiked, true);
+  assert.equal(queryAfterLike.count, 1);
+
+  // Other user views
+  const queryOther = getServerReactions(postId, other);
+  assert.equal(queryOther.isLiked, false);
+  assert.equal(queryOther.count, 1);
+
+  // Viewer unlikes
+  const unlike = toggleServerReaction(postId, viewer);
+  assert.equal(unlike.isLiked, false);
+  assert.equal(unlike.count, 0);
+});
+
+test("social store follow toggles correctly track relationships", async () => {
+  const { toggleServerFollow, getServerFollowing } = await import("../src/infrastructure/social/socialStore.ts");
+
+  // Viewer follows other
+  const followed = toggleServerFollow(viewer, other);
+  assert.equal(followed, true);
+  assert.ok(getServerFollowing(viewer).includes(other.toLowerCase()));
+
+  // Viewer unfollows other
+  const unfollowed = toggleServerFollow(viewer, other);
+  assert.equal(unfollowed, false);
+  assert.ok(!getServerFollowing(viewer).includes(other.toLowerCase()));
+
+  // Self-follow rejected
+  const selfFollow = toggleServerFollow(viewer, viewer);
+  assert.equal(selfFollow, false);
+});
+
+test("social feed contains zero fake financial payouts or mock wins", async () => {
+  const { getSocialFeed } = await import("../src/domain/social/socialService.ts");
+  const feed = getSocialFeed();
+
+  for (const post of feed) {
+    // Assert no fake seeds claiming net payouts
+    if (post.id.startsWith("genesis-")) {
+      assert.ok(!post.description.includes("Net payout"), `Post ${post.id} contains mock net payout claim`);
+      assert.ok(!post.title.includes("Victory: +"), `Post ${post.id} contains mock victory claim`);
+    }
+  }
+});
+
+test("social store supports Twitter-style replies on tweets and challenges", async () => {
+  const { addTweetReply, getTweetReplies } = await import("../src/infrastructure/social/socialStore.ts");
+  const postId = "genesis-challenge-1";
+
+  const initialReplies = getTweetReplies(postId);
+  const reply = addTweetReply(postId, {
+    authorAddress: viewer,
+    authorName: "AlphaTrader",
+    content: "Calling your bluff on $BTC. Let's see who wins in 30s.",
+  });
+
+  assert.ok(reply);
+  assert.equal(reply.authorAddress, viewer.toLowerCase());
+  assert.equal(reply.content, "Calling your bluff on $BTC. Let's see who wins in 30s.");
+
+  const updatedReplies = getTweetReplies(postId);
+  assert.equal(updatedReplies.length, initialReplies.length + 1);
+  assert.equal(updatedReplies[updatedReplies.length - 1].id, reply.id);
+});
+
+test("social store tracks Twitter-style reposts / retweets per account", async () => {
+  const { toggleServerRepost, getServerReposts } = await import("../src/infrastructure/social/socialStore.ts");
+  const postId = "test-repost-post-1";
+
+  const firstRepost = toggleServerRepost(postId, viewer);
+  assert.equal(firstRepost.isReposted, true);
+  assert.equal(firstRepost.count, 1);
+
+  const queryRepost = getServerReposts(postId, viewer);
+  assert.equal(queryRepost.isReposted, true);
+  assert.equal(queryRepost.count, 1);
+
+  // Other user views repost status
+  const otherQuery = getServerReposts(postId, other);
+  assert.equal(otherQuery.isReposted, false);
+  assert.equal(otherQuery.count, 1);
+
+  // Viewer un-reposts
+  const unRepost = toggleServerRepost(postId, viewer);
+  assert.equal(unRepost.isReposted, false);
+  assert.equal(unRepost.count, 0);
+});
+
+test("socialStore validates EVM address format and rejects invalid authors", async () => {
+  const { saveChallenge, addTweetReply } = await import("../src/infrastructure/social/socialStore.ts");
+
+  // Invalid addresses must throw validation errors
+  assert.throws(
+    () => saveChallenge({ authorAddress: "not-an-address", title: "Test", description: "Test" }),
+    /INVALID_AUTHOR_ADDRESS/
+  );
+
+  assert.throws(
+    () => addTweetReply("genesis-challenge-1", { authorAddress: "0x123", content: "Invalid author" }),
+    /INVALID_REPLY_AUTHOR/
+  );
+});
+
+test("socialStore rejects malformed duelId on challenge creation", async () => {
+  const { saveChallenge } = await import("../src/infrastructure/social/socialStore.ts");
+
+  assert.throws(
+    () => saveChallenge({
+      authorAddress: viewer,
+      title: "Malicious Duel ID",
+      description: "Trying sql injection or invalid id",
+      duelId: "not-a-number-123abc",
+    }),
+    /INVALID_DUEL_ID/
+  );
+
+  // Valid numeric onchain ID must succeed
+  const valid = saveChallenge({
+    authorAddress: viewer,
+    title: "Valid Duel ID Challenge",
+    description: "Challenge with real onchain duel ID 101",
+    duelId: "101",
+  });
+  assert.equal(valid.duelId, "101");
+});
+
+test("socialStore persists on-chain duel records without client localStorage", async () => {
+  const { saveServerDuelRecord, getServerDuelHistory } = await import("../src/infrastructure/social/socialStore.ts");
+
+  const duel = saveServerDuelRecord({
+    playerAddress: viewer,
+    asset: "BTC",
+    strikePrice: 96000,
+    settledPrice: 96500,
+    direction: "HIGHER",
+    outcome: "WIN",
+    stake: 0.5,
+    payout: 0.98,
+    eloDelta: 16,
+    mode: "onchain",
+    onChainDuelId: "1",
+  });
+
+  assert.equal(duel.playerAddress, viewer.toLowerCase());
+  assert.equal(duel.onChainDuelId, "1");
+
+  const history = getServerDuelHistory(viewer, "onchain");
+  assert.ok(history.some((d) => d.id === duel.id && d.onChainDuelId === "1"));
+});
