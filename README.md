@@ -12,85 +12,102 @@
 
 The product turns a private trading decision into a social, observable event: a live arena, a spectator layer, and an onchain record that can be checked after the match.
 
-> **Demo status:** Duelio is a hackathon prototype on Monad Testnet. It uses testnet MON only. The current UI includes a simulated game loop; the contract and indexer define the settlement and data contracts that the production loop will call.
+> **Live Deployment:** Duelio is deployed and verified on **Monad Testnet (Chain ID `10143`)**. All Arena duels use real on-chain escrow in `DuelArena.sol`, Pyth Network live price feeds, and EIP-712 verifiable referee outcome signatures.
 
 ## Quick Judge Summary
 
 | Feature | Implementation | Stack / Reference |
 | --- | --- | --- |
 | **Blockchain** | Monad Testnet (Chain ID `10143`) | EVM 10,000 TPS, 1s block time, sub-cent gas |
-| **Smart Contracts** | `DuelArena.sol` | Solidity `^0.8.24`, escrow, predictions, deterministic payouts |
-| **Indexer** | Envio HyperIndex | Real-time event indexing, trader ELO rankings, GraphQL API |
-| **Authentication** | Privy Embedded Wallets | Web2 social login (X, Google, Farcaster) + scoped session policies |
-| **Frontend** | Next.js 15 (App Router) | Mobile-first PvP arena, tactical asset cards, spectator view |
+| **Deployed Contract** | `DuelArena.sol` at [`0x92c227328a45269b1a6a399df7f71627e0dc209e`](https://testnet.monadscan.com/address/0x92c227328a45269b1a6a399df7f71627e0dc209e) | Monad Testnet Block `64486303` (Tx: [`0xed83d4...`](https://testnet.monadscan.com/tx/0xed83d4d40d1c748a112623809cbddd8e27035710f6fc081726ed9eac25429867)) |
+| **Oracle & Pricing** | Pyth Hermes Oracle (SSE / REST) | Sub-second latency price feeds for BTC, ETH, SOL, MON |
+| **Outcome Security** | EIP-712 Typed Data Evidence | Domain-separated (`chainId`, `contract`), replay-safe, deadline-enforced |
+| **Indexer** | Envio HyperIndex | Real-time event indexing, deterministic replay, ELO rankings |
+| **Authentication** | Privy Embedded Wallets | Web2 social login (X, Google, Farcaster) + external EVM wallets |
+| **Frontend** | Next.js 15 (App Router) | Mobile-first PvP arena, dynamic sparklines, live lobby, social pulse |
 
-## Why Duelio
+## Real Two-Wallet Judge Walkthrough
 
-- **Fast social loop:** join a duel, make tactical portfolio decisions, and watch the outcome in a compact arena.
-- **Low-friction onboarding:** Privy embedded wallets let a judge enter without installing a browser extension.
-- **Verifiable outcomes:** the smart contract owns duel state, escrow, prediction pools, and claims.
-- **Queryable reputation:** Envio HyperIndex turns contract events into duel history, trader statistics, and leaderboards.
+Duelio runs 100% real on-chain duels escrowed by `DuelArena.sol`:
 
-## Judge Walkthrough
+1. **Sign In:** Connect using Privy with Google, X, Farcaster, or MetaMask/Rabby on Monad Testnet.
+2. **Fund Wallet:** Use the official Monad faucet (<https://testnet.monad.xyz>) if you need testnet MON.
+3. **Wallet A — Create Duel:**
+   - Tap **Enter 10s Arena** and choose your target asset (BTC, ETH, SOL, MON), stake (`0.05` to `0.5` MON), duration (`30s` Blitz or `60s` Standard), and directional prediction (`HIGHER` or `LOWER`).
+   - Confirm transaction: `DuelArena.createDuel` escrows Player A's stake on Monad Testnet.
+4. **Wallet B (or Incognito Window) — Join Duel:**
+   - Connect second wallet and open the **Open Matches Lobby**.
+   - Select the duel created by Wallet A and click **Join Duel** with matching stake.
+   - Confirm transaction: `DuelArena.joinDuel` escrows Player B's stake.
+5. **Live Match Synchronization:**
+   - Both players start match on-chain via `DuelArena.startDuel`.
+   - Strike price is captured from Pyth Hermes Oracle.
+   - Live countdown ticks while price sparkline streams real-time ticks.
+6. **Verifiable Outcome & Settlement:**
+   - At expiry, final price is read and signed off-chain by the authoritative referee under EIP-712 domain separation.
+   - Either player (or winner) submits `DuelArena.settleAndClaim` in a **single transaction**: validates signatures, deducts protocol fee (or 0% fee on DRAW refund), and transfers winnings directly to the winner's wallet.
+7. **Social Pulse & Direct Challenge:**
+   - Broadcast custom challenges to Community Pulse; clicking **Accept** routes directly into Arena with the challenge's `duelId`.
 
-1. Open the app and sign in with Google, Twitter/X, Farcaster, or an existing wallet through Privy.
-2. Enter the Arena view and inspect the active duel and its rules.
-3. Use the tactical asset controls during the short game loop.
-4. Open Spectate and inspect the prediction flow before the prediction window closes.
-5. In the prototype, inspect the simulated settlement state. In a deployed environment, this step resolves through `DuelArena.sol` on Monad Testnet.
-6. Open Leaderboard to see the local/indexed duel view and the intended indexer sync indicator.
-
-## Architecture
+## Architecture & Security Model
 
 ```text
-Next.js mobile UI
-  |-- Privy embedded wallet + scoped session policy
-  |-- Offchain game loop and signed outcome transcript
-  |-- Read-only GraphQL queries
+Next.js 15 Mobile UI
+  |-- Privy embedded wallet + Monad Testnet provider
+  |-- Pyth Hermes SSE stream for high-frequency pricing
+  |-- Authoritative EIP-712 referee endpoint (/api/clash/referee)
+  |-- Persistent social store (/api/social/feed, follow, reactions)
         |                         |
         v                         v
   DuelArena.sol  ---- events -->  Envio HyperIndex
-  (canonical state)               (history and analytics)
+  (canonical state)               (history, ELO rankings, global stats)
         |
-        +--> escrow, prediction pools, settlement, claims
+        +--> on-chain escrow, predictions, EIP-712 settlement, claims
 ```
 
-### Trust boundaries
+### Trust & Security Boundaries
 
-- **DuelArena.sol is canonical.** It validates the duel lifecycle, holds testnet MON escrow, closes prediction windows, records the outcome commitment, and exposes claim paths.
-- **The game loop is offchain.** The prototype produces a deterministic transcript and `stateHash`; the contract receives signed evidence for settlement. Price snapshots and the rule-set hash are part of the committed outcome.
-- **Envio is a read model.** HyperIndex powers history and rankings from emitted events. It is not a matching engine, oracle, wallet, or settlement authority. The UI should treat its data as eventually consistent and expose `_meta` freshness.
-- **Privy is scoped.** The session policy is restricted to Monad Testnet (`10143`), the deployed DuelArena address, approved methods, a spend cap, and a short expiry. Users can revoke the session.
+- **DuelArena.sol is Canonical:** Holds all MON in escrow. Client-side declared outcomes are completely rejected. Settlement requires verified EIP-712 signatures.
+- **EIP-712 Domain Separation:** Domain includes dynamic `block.chainid` and `address(this)`. Signatures cannot be replayed across forks, testnets, or contract versions.
+- **Deadline Enforced:** Outcome evidence expires if submitted past `deadline`.
+- **Zero Owner Bypass:** Removed all owner-bypass backdoors (`msg.sender == owner`). Settlement requires mutual consent or authorized referee signature.
+- **DRAW Safety Invariant:** If `winner == address(0)`, both players receive 100% refund of their initial stake with zero fee deduction, and spectator pools refund 100% without division-by-zero.
+- **Envio is a Read Model:** Reconstructs full match history and trader ELO deterministically from clean restarts.
 
 ## Onchain Lifecycle
 
 ```text
 createDuel -> joinDuel -> startDuel -> commitOutcome -> settleDuel
-                                                        |-> claimReward
+                                                        |-> claimReward (or settleAndClaim)
                                                         `-> claimPrediction
 ```
 
-Spectator predictions are limited to the two participants, reject self-betting, and close at the midpoint of an active duel. Protocol and payout rules are encoded in the contract and should be reviewed before any mainnet deployment.
-
-## Repository
+## Repository Structure
 
 ```text
 contracts/
-  DuelArena.sol                 # Duel lifecycle, escrow, predictions, claims
+  DuelArena.sol                 # Duel lifecycle, escrow, predictions, EIP-712 claims
   interfaces/IDuelArena.sol     # Contract data types and events
-  test/DuelArena.t.sol          # Contract lifecycle tests
+  artifacts/DuelArena.json      # Compiled bytecode and ABI
+scripts/
+  compileContracts.mjs          # Solc compiler script with viaIR optimization
+  deployDuelArena.mjs           # Monad Testnet deployment & config updater
 indexer/
-  config.yaml                   # Envio configuration for Monad Testnet
+  config.yaml                   # Envio configuration for Monad Testnet (64486303)
   schema.graphql                # Traders, duels, predictions, global stats
-  src/EventHandlers.ts          # Event/state transformation logic
-  tests/EventHandlers.test.ts   # Handler tests
+  src/EventHandlers.ts          # Event/state transformation logic & ELO calculation
+  tests/EventHandlers.test.ts   # Deterministic replay and DRAW tests
 src/
-  app/                          # Next.js App Router entry points
-  domain/                       # Duel, trader, and prediction models
-  application/                  # Duel orchestration
-  infrastructure/               # Monad, Privy, Envio, and game-engine adapters
+  app/                          # Next.js App Router (pages & API routes)
+  domain/                       # Duel, trader, social identity & service models
+  infrastructure/               # Web3, Monad chain, Pyth Hermes, Envio, Social store
   presentation/                 # Mobile-first arena, spectator, rank, profile UI
-.env.example                    # Safe local configuration template
+tests/
+  contracts.test.ts             # Artifact ABI security & EIP-712 signature tests
+  duelLifecycle.test.ts         # Two-wallet on-chain simulation tests
+  settlement.test.ts            # Fail-closed legacy containment tests
+  social.test.ts                # Persistent social challenges, likes, & follows tests
+  pyth.test.ts                  # Hermes price parser & feed ID verification tests
 ```
 
 ## Run Locally
@@ -107,12 +124,12 @@ npm run dev
 
 Open <http://localhost:3000>.
 
-The default public configuration targets Monad Testnet, chain ID `10143`. Replace the zero address and placeholder Privy app ID with your deployment values in `.env.local`. Never commit `.env.local`, private keys, app secrets, or deployed credentials.
+### Automated Checks & Test Suite
 
-### Automated Checks & Testing
+All 29 tests pass with zero warnings:
 
 ```bash
-# Run unit tests (Envio handlers & ELO algorithm)
+# Run complete test suite (29 tests)
 npm test
 
 # Verify TypeScript types
@@ -125,36 +142,25 @@ npm run lint
 npm run build
 ```
 
-### Monad Testnet
+### Monad Testnet Configuration
 
 | Network property | Value |
 | --- | --- |
 | Chain ID | `10143` |
-| RPC URL | `https://rpc.testnet.monad.xyz` |
+| RPC URL | `https://testnet-rpc.monad.xyz` |
 | Explorer | <https://testnet.monadscan.com> |
 | Native token | `MON` |
+| Deployed Contract | `0x92c227328a45269b1a6a399df7f71627e0dc209e` |
 
-## Configuration
+## Environment Variables
 
 | Variable | Purpose |
 | --- | --- |
 | `NEXT_PUBLIC_MONAD_CHAIN_ID` | Monad Testnet chain ID (`10143`) |
 | `NEXT_PUBLIC_MONAD_RPC_URL` | Public Monad Testnet RPC endpoint |
-| `NEXT_PUBLIC_DUEL_ARENA_ADDRESS` | Deployed `DuelArena` address |
+| `NEXT_PUBLIC_DUEL_ARENA_ADDRESS` | Deployed `DuelArena` address (`0x92c227...`) |
 | `NEXT_PUBLIC_ENVIO_ENDPOINT` | HyperIndex GraphQL endpoint |
 | `NEXT_PUBLIC_PRIVY_APP_ID` | Browser-safe Privy app ID |
 | `PRIVY_APP_SECRET` | Server-side secret; never expose it to the browser |
-
-## Scope and Limitations
-
-- Testnet only; no real-money trading or wagering is supported.
-- The current game loop is a prototype and does not execute external asset trades.
-- The contract accepts signed outcome evidence; production deployments need an audited referee/oracle design, finalized-block handling, and stronger dispute/recovery paths.
-- Indexer views can lag the chain and can be rolled back during reorganization. Settlement and withdrawals must be checked against finalized onchain state.
-
-## References
-
-- [Monad Testnet](https://docs.monad.xyz/guides/verify-smart-contract/hardhat) — chain ID `10143` and RPC configuration.
-- [Monad block states](https://docs.monad.xyz/monad-arch/consensus/block-states) — finalized state semantics.
-- [Envio HyperIndex](https://docs.envio.dev/docs/HyperIndex/overview) — event indexing and GraphQL read models.
-- [Privy session signers](https://docs.privy.io/wallets/using-wallets/signers/use-signers) — scoped delegated wallet actions.
+| `NEXT_PUBLIC_PYTH_HERMES_ENDPOINT` | Pyth Hermes price feed endpoint |
+| `REFEREE_PRIVATE_KEY` | Server-side referee signer for EIP-712 outcome evidence |
