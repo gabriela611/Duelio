@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test indexer/tests/EventHandlers.test.ts tests/auth.test.ts tests/repository.test.ts tests/social.test.ts tests/pyth.test.ts tests/contracts.test.ts tests/settlement.test.ts tests/duelLifecycle.test.ts tests/backfill.test.ts"
+    "test": "node --experimental-strip-types --test indexer/tests/EventHandlers.test.ts tests/auth.test.ts tests/repository.test.ts tests/social.test.ts tests/pyth.test.ts tests/contracts.test.ts tests/settlement.test.ts tests/duelLifecycle.test.ts tests/backfill.test.ts tests/shadowRead.test.ts",
+    "verify-parity": "node --experimental-strip-types scripts/verifyParity.ts"
   },
   "dependencies": {
     "@privy-io/react-auth": "^1.98.0",
