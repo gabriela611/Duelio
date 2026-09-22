@@ -12,12 +12,14 @@ import {
   Users,
   User,
   ArrowLeft,
-  ShieldAlert,
   Radio,
   TrendingUp,
   TrendingDown,
   Coins,
   Percent,
+  Gauge,
+  Sparkles,
+  Activity,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import Link from "next/link";
@@ -32,11 +34,10 @@ interface RocketState {
   score: number;
   multiplier: number;
   inCorridor: boolean;
-  liquidated: boolean;
   name: string;
   avatar: string;
   color: string;
-  flameColor: string;
+  accentColor: string;
 }
 
 interface Particle {
@@ -49,20 +50,10 @@ interface Particle {
   color: string;
 }
 
-interface Star {
+interface PriceSample {
   x: number;
+  price: number;
   y: number;
-  size: number;
-  twinkle: number;
-  speed: number;
-}
-
-interface FloatingMeme {
-  text: string;
-  x: number;
-  y: number;
-  speed: number;
-  color: string;
 }
 
 export function RocketClashGame() {
@@ -101,55 +92,45 @@ export function RocketClashGame() {
   // Physics & Animation references
   const animFrameId = useRef<number>(0);
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const priceHistoryBufferRef = useRef<PriceSample[]>([]);
 
-  // Dynamic Pyth Oracle Target Corridor
+  // Real-time Pyth Oracle Corridor
   const corridorRef = useRef({
-    topY: 140,
-    bottomY: 260,
-    targetY: 180,
-    speed: 0.035,
-    phase: 0,
+    topY: 160,
+    bottomY: 280,
+    targetY: 220,
+    smoothedY: 220,
   });
 
   const p1Ref = useRef<RocketState>({
-    y: 200,
+    y: 220,
     vy: 0,
     tilt: 0,
     thrusting: false,
     score: 0,
     multiplier: 1.0,
     inCorridor: true,
-    liquidated: false,
     name: "Gmonad Alpha",
     avatar: "🟣",
-    color: "#836EF9",
-    flameColor: "#FF6B00",
+    color: "#6E4EF4", // Apple-style Monad Deep Purple
+    accentColor: "#836EF9",
   });
 
   const p2Ref = useRef<RocketState>({
-    y: 200,
+    y: 220,
     vy: 0,
     tilt: 0,
     thrusting: false,
     score: 0,
     multiplier: 1.0,
     inCorridor: true,
-    liquidated: false,
-    name: "Pepe Rocket",
-    avatar: "🐸",
-    color: "#10B981",
-    flameColor: "#00FFA3",
+    name: "MemeBot AI",
+    avatar: "🤖",
+    color: "#0F172A", // Sleek Cupertino Slate
+    accentColor: "#10B981",
   });
 
   const particlesRef = useRef<Particle[]>([]);
-  const starsRef = useRef<Star[]>([]);
-  const memesRef = useRef<FloatingMeme[]>([
-    { text: "gmonad ⚡", x: 700, y: 80, speed: 1.2, color: "#836EF9" },
-    { text: "10,000 TPS 🚀", x: 950, y: 120, speed: 1.5, color: "#00FFA3" },
-    { text: "PYTH ORACLE 👁️", x: 1200, y: 60, speed: 1.0, color: "#EC4899" },
-    { text: "WAGMI ✨", x: 1450, y: 150, speed: 1.3, color: "#FBBF24" },
-    { text: "LONG $MON 50x", x: 1700, y: 90, speed: 1.4, color: "#3B82F6" },
-  ]);
 
   // Sound toggle
   const toggleSound = () => {
@@ -158,22 +139,7 @@ export function RocketClashGame() {
     soundEngine.setMuted(next);
   };
 
-  // Star generation on mount
-  useEffect(() => {
-    const stars: Star[] = [];
-    for (let i = 0; i < 50; i++) {
-      stars.push({
-        x: Math.random() * 880,
-        y: Math.random() * 480,
-        size: Math.random() * 2 + 1,
-        twinkle: Math.random() * Math.PI * 2,
-        speed: Math.random() * 0.05 + 0.02,
-      });
-    }
-    starsRef.current = stars;
-  }, []);
-
-  // Keyboard controls listener with scroll prevention
+  // Keyboard controls with scroll prevention
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === "KeyW" || e.code === "Space" || e.code === "ArrowUp") {
@@ -239,7 +205,6 @@ export function RocketClashGame() {
       score: 0,
       multiplier: 1.0,
       inCorridor: true,
-      liquidated: false,
     };
 
     p2Ref.current = {
@@ -251,10 +216,12 @@ export function RocketClashGame() {
       score: 0,
       multiplier: 1.0,
       inCorridor: true,
-      liquidated: false,
+      name: gameMode === "solo" ? "MemeBot AI" : "Rival Challenger",
+      avatar: gameMode === "solo" ? "🤖" : "🐸",
     };
 
     particlesRef.current = [];
+    priceHistoryBufferRef.current = [];
 
     if (roundTimerRef.current) clearInterval(roundTimerRef.current);
 
@@ -283,10 +250,10 @@ export function RocketClashGame() {
           soundEngine.playVictoryJingle();
           try {
             confetti({
-              particleCount: 80,
-              spread: 70,
+              particleCount: 75,
+              spread: 65,
               origin: { y: 0.6 },
-              colors: ["#836EF9", "#00FFA3", "#FF6B00"],
+              colors: ["#6E4EF4", "#10B981", "#F59E0B"],
             });
           } catch (_) {}
         } else {
@@ -295,7 +262,7 @@ export function RocketClashGame() {
         }
       }
     }, 1000);
-  }, []);
+  }, [gameMode]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -313,115 +280,133 @@ export function RocketClashGame() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    let lastTime = performance.now();
+
     const render = (time: number) => {
+      const dt = Math.min((time - lastTime) / 1000, 0.1);
+      lastTime = time;
+
       const width = canvas.width;
       const height = canvas.height;
+      const strikeCenterY = height * 0.5;
 
-      // 1. UPDATE PHYSICS & LOGIC
+      // 1. UPDATE REAL-TIME PYTH ORACLE CORRIDOR
       if (gameState === "playing") {
-        // Real-Time Pyth Oracle Corridor Trajectory:
-        // Center of corridor moves dynamically based on (1) real Pyth price delta + (2) micro-volatility wave
-        const corr = corridorRef.current;
-        corr.phase += corr.speed;
-
         const currP = currentPriceRef.current;
         const strikeP = strikePriceRef.current;
-        const deltaPct = strikeP > 0 ? ((currP - strikeP) / strikeP) * 100 : 0;
 
-        // Market delta offsets the vertical center: green pump moves corridor up, red dump moves down
-        const priceOffset = Math.max(-100, Math.min(100, deltaPct * 120));
-        const waveOffset = Math.sin(corr.phase) * (height * 0.22) + Math.sin(corr.phase * 2.3) * 16;
-        const targetCenter = height * 0.48 - priceOffset + waveOffset;
+        // Calculate REAL-TIME price delta percentage
+        const priceDeltaPercent = strikeP > 0 ? ((currP - strikeP) / strikeP) * 100 : 0;
 
-        corr.targetY = targetCenter;
-        const corridorHeight = 115;
-        corr.topY = Math.max(30, targetCenter - corridorHeight / 2);
-        corr.bottomY = Math.min(height - 40, targetCenter + corridorHeight / 2);
+        // Apple Design Dynamic Scaling:
+        // Sensitivity calibrated so ±0.15% price delta spans comfortable screen altitude
+        const deltaPx = Math.max(-130, Math.min(130, priceDeltaPercent * 450));
+        const rawTargetY = strikeCenterY - deltaPx;
 
-        // Intelligent MemeBot AI behavior in Solo mode
+        // Smooth spring-damped corridor interpolation
+        const corr = corridorRef.current;
+        corr.targetY = rawTargetY;
+        corr.smoothedY += (rawTargetY - corr.smoothedY) * Math.min(1, 6.0 * dt);
+
+        const corridorHeight = 118;
+        corr.topY = Math.max(28, corr.smoothedY - corridorHeight / 2);
+        corr.bottomY = Math.min(height - 28, corr.smoothedY + corridorHeight / 2);
+
+        // Record real price point for scrolling line visualization
+        const buffer = priceHistoryBufferRef.current;
+        buffer.push({
+          x: width,
+          price: currP,
+          y: corr.smoothedY,
+        });
+
+        // Scroll price samples leftward
+        for (let i = buffer.length - 1; i >= 0; i--) {
+          buffer[i].x -= 2.2;
+          if (buffer[i].x < -20) {
+            buffer.splice(i, 1);
+          }
+        }
+
+        // 2. INTELLIGENT MEMEBOT AI BEHAVIOR
         if (gameMode === "solo") {
           const p2 = p2Ref.current;
-          const desiredY = targetCenter + Math.sin(time * 0.003) * 12;
-          const distance = p2.y - desiredY;
+          // AI tracks the smoothed corridor center with calibrated human reaction jitter
+          const targetY = corr.smoothedY + Math.sin(time * 0.0025) * 8;
+          const dist = p2.y - targetY;
 
-          // Reacts to distance from target line
-          if (distance > 6 && p2.vy > -1.2) {
+          if (dist > 7 && p2.vy > -1.2) {
             p2.thrusting = true;
-          } else if (distance < -6 && p2.vy < 1.0) {
+          } else if (dist < -7 && p2.vy < 0.9) {
             p2.thrusting = false;
           }
         }
 
-        // Update Rockets
+        // 3. ROCKET PHYSICS & SCORING
         [p1Ref.current, p2Ref.current].forEach((r, idx) => {
-          if (r.liquidated) return;
-
           const gravity = 0.38;
-          const thrust = -0.82;
+          const thrust = -0.84;
 
           if (r.thrusting) {
             r.vy += thrust;
-            // Spawn exhaust flame particles
-            for (let i = 0; i < 2; i++) {
-              particlesRef.current.push({
-                x: idx === 0 ? width * 0.28 : width * 0.44,
-                y: r.y + 16,
-                vx: (Math.random() - 0.5) * 1.5 - 2,
-                vy: Math.random() * 2 + 1,
-                size: Math.random() * 5 + 3,
-                alpha: 0.9,
-                color: r.flameColor,
-              });
-            }
+            // Spawn subtle flame particles
+            const rocketX = idx === 0 ? width * 0.28 : width * 0.44;
+            particlesRef.current.push({
+              x: rocketX - 16,
+              y: r.y + (Math.random() - 0.5) * 4,
+              vx: -(Math.random() * 20 + 10),
+              vy: (Math.random() - 0.5) * 8,
+              size: Math.random() * 3 + 1.5,
+              alpha: 0.85,
+              color: idx === 0 ? "#6E4EF4" : "#10B981",
+            });
           }
 
           r.vy += gravity;
-          r.vy *= 0.965; // air drag
+          r.vy *= 0.965; // Atmospheric drag
           r.y += r.vy;
 
-          // Tilt calculation
-          r.tilt = Math.max(-25, Math.min(30, r.vy * 3.2));
+          // Aerodynamic tilt
+          r.tilt = Math.max(-22, Math.min(28, r.vy * 3.4));
 
-          // Boundary checks & Repulsion
-          if (r.y < 25) {
-            r.y = 25;
-            r.vy = 1.2;
+          // Apple-style soft bounce on ceiling / floor boundaries
+          if (r.y < 26) {
+            r.y = 26;
+            r.vy = 1.0;
             soundEngine.playLiquidationWarning();
           }
-          if (r.y > height - 35) {
-            r.y = height - 35;
-            r.vy = -1.2;
+          if (r.y > height - 32) {
+            r.y = height - 32;
+            r.vy = -1.0;
             soundEngine.playLiquidationWarning();
           }
 
-          // In-Corridor scoring & Multiplier build
+          // In-Corridor Scoring & Multiplier
           if (r.y >= corr.topY && r.y <= corr.bottomY) {
             r.inCorridor = true;
-            r.score += 1.8;
-            r.multiplier = Math.min(5.0, r.multiplier + 0.005);
+            r.score += 2.2;
+            r.multiplier = Math.min(5.0, r.multiplier + 0.006);
             if (Math.random() < 0.08) soundEngine.playScorePing();
           } else {
             r.inCorridor = false;
-            r.multiplier = Math.max(1.0, r.multiplier - 0.007);
+            r.multiplier = Math.max(1.0, r.multiplier - 0.008);
           }
         });
 
         // Update particle physics
-        particlesRef.current.forEach((p) => {
-          p.x += p.vx;
-          p.y += p.vy;
-          p.alpha -= 0.025;
-          p.size = Math.max(0, p.size - 0.1);
-        });
-        particlesRef.current = particlesRef.current.filter((p) => p.alpha > 0);
+        for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+          const p = particlesRef.current[i];
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.alpha -= 2.2 * dt;
+          p.size = Math.max(0.2, p.size - 2 * dt);
 
-        // Update floating meme banners
-        memesRef.current.forEach((m) => {
-          m.x -= m.speed;
-          if (m.x < -180) m.x = width + 50;
-        });
+          if (p.alpha <= 0) {
+            particlesRef.current.splice(i, 1);
+          }
+        }
 
-        // Update HUD telemetry
+        // Sync React HUD telemetry
         setP1Telemetry({
           score: Math.floor(p1Ref.current.score),
           mult: Number(p1Ref.current.multiplier.toFixed(2)),
@@ -434,99 +419,67 @@ export function RocketClashGame() {
         });
       }
 
-      // 2. RENDER SCENE (The Iconic Monad Void Aesthetic from cc62825)
+      // 4. APPLE DESIGN CANVAS RENDERING
       ctx.clearRect(0, 0, width, height);
 
-      // Dark Monad Void Canvas Gradient
+      // Clean Apple Light Mode Surface
       const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
-      bgGrad.addColorStop(0, "#090014");
-      bgGrad.addColorStop(0.5, "#140029");
-      bgGrad.addColorStop(1, "#200052");
+      bgGrad.addColorStop(0, "#FFFFFF");
+      bgGrad.addColorStop(1, "#F8F8F7");
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // Distant Neon Grid lines
-      ctx.strokeStyle = "rgba(131, 110, 249, 0.08)";
+      // Subtle Cupertino Grid Lines
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.04)";
       ctx.lineWidth = 1;
-      for (let y = 40; y < height; y += 40) {
+      for (let y = 30; y < height; y += 45) {
         ctx.beginPath();
         ctx.moveTo(0, y);
         ctx.lineTo(width, y);
         ctx.stroke();
       }
 
-      // Render Stars
-      starsRef.current.forEach((s) => {
-        s.twinkle += s.speed;
-        const alpha = 0.4 + Math.sin(s.twinkle) * 0.35;
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-        ctx.beginPath();
-        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
-        ctx.fill();
-      });
-
-      // Background Candlestick Skyline (Crypto Easter Egg)
-      const candleColors = ["#00FFA3", "#00FFA3", "#FF3B69", "#00FFA3", "#FF3B69", "#00FFA3", "#00FFA3"];
-      const candleHeights = [90, 130, 80, 160, 110, 140, 180];
-      candleHeights.forEach((ch, i) => {
-        const cx = 80 + i * 110;
-        const cy = height - ch;
-        // Wick
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(cx + 14, cy - 25);
-        ctx.lineTo(cx + 14, height - 10);
-        ctx.stroke();
-
-        // Body
-        ctx.fillStyle = candleColors[i % candleColors.length] + "22";
-        ctx.strokeStyle = candleColors[i % candleColors.length] + "55";
-        ctx.lineWidth = 1.5;
-        ctx.fillRect(cx, cy, 28, ch - 20);
-        ctx.strokeRect(cx, cy, 28, ch - 20);
-      });
-
-      // Monad Moon with Pepe Astronaut
-      const moonX = width - 110;
-      const moonY = 80;
-      const moonGrad = ctx.createRadialGradient(moonX, moonY, 10, moonX, moonY, 55);
-      moonGrad.addColorStop(0, "#C4B5FD");
-      moonGrad.addColorStop(0.7, "#836EF9");
-      moonGrad.addColorStop(1, "rgba(131, 110, 249, 0)");
-      ctx.fillStyle = moonGrad;
+      // Strike Price Center Baseline
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 6]);
       ctx.beginPath();
-      ctx.arc(moonX, moonY, 55, 0, Math.PI * 2);
+      ctx.moveTo(0, strikeCenterY);
+      ctx.lineTo(width, strikeCenterY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Strike Price Tag Badge on Left
+      ctx.fillStyle = "#FFFFFF";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(14, strikeCenterY - 10, 110, 20, 6);
       ctx.fill();
+      ctx.stroke();
 
-      // Draw Cartoon Pepe on the Moon
-      ctx.font = "26px sans-serif";
-      ctx.fillText("🐸", moonX - 16, moonY + 8);
-      ctx.font = "bold 9px monospace";
-      ctx.fillStyle = "#A78BFA";
-      ctx.fillText("MONAD MOON", moonX - 28, moonY + 34);
+      ctx.font = "bold 9px system-ui, -apple-system, sans-serif";
+      ctx.fillStyle = "#64748B";
+      ctx.textAlign = "center";
+      ctx.fillText(`STRIKE: $${strikePriceRef.current.toFixed(selectedAsset === "BTC" ? 1 : 2)}`, 69, strikeCenterY + 3.5);
 
-      // Floating Meme Banners
-      memesRef.current.forEach((m) => {
-        ctx.font = "bold 11px monospace";
-        ctx.fillStyle = m.color;
-        ctx.fillText(m.text, m.x, m.y);
-      });
-
-      // Render Dynamic Pyth Oracle Green Target Corridor
+      // Render Dynamic Pyth Green Prediction Corridor
       const corr = corridorRef.current;
+      const corridorHeight = corr.bottomY - corr.topY;
+
+      // Soft emerald corridor fill
       const corridorGrad = ctx.createLinearGradient(0, corr.topY, 0, corr.bottomY);
-      corridorGrad.addColorStop(0, "rgba(0, 255, 163, 0.03)");
-      corridorGrad.addColorStop(0.5, "rgba(0, 255, 163, 0.12)");
-      corridorGrad.addColorStop(1, "rgba(0, 255, 163, 0.03)");
+      corridorGrad.addColorStop(0, "rgba(16, 185, 129, 0.04)");
+      corridorGrad.addColorStop(0.5, "rgba(16, 185, 129, 0.12)");
+      corridorGrad.addColorStop(1, "rgba(16, 185, 129, 0.04)");
 
       ctx.fillStyle = corridorGrad;
-      ctx.fillRect(0, corr.topY, width, corr.bottomY - corr.topY);
+      ctx.fillRect(0, corr.topY, width, corridorHeight);
 
-      // Corridor neon boundaries
-      ctx.strokeStyle = "rgba(0, 255, 163, 0.75)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 5]);
+      // Corridor Top & Bottom Boundaries (Apple frosted hairline)
+      ctx.strokeStyle = "rgba(16, 185, 129, 0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 4]);
 
       ctx.beginPath();
       ctx.moveTo(0, corr.topY);
@@ -537,22 +490,32 @@ export function RocketClashGame() {
       ctx.moveTo(0, corr.bottomY);
       ctx.lineTo(width, corr.bottomY);
       ctx.stroke();
-      ctx.setLineDash([]); // Reset line dash
-
-      // Corridor Center Prediction Line
-      ctx.strokeStyle = "rgba(0, 255, 163, 0.35)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath();
-      ctx.moveTo(0, corr.targetY);
-      ctx.lineTo(width, corr.targetY);
-      ctx.stroke();
       ctx.setLineDash([]);
 
-      // Corridor label
-      ctx.font = "bold 10px monospace";
-      ctx.fillStyle = "#00FFA3";
-      ctx.fillText(`⚡ PYTH PREDICTION CORRIDOR (SURF FOR 5X) ⚡`, 18, corr.topY + 16);
+      // Real-time Pyth Price Path Curve (Historical samples ribbon)
+      const samples = priceHistoryBufferRef.current;
+      if (samples.length > 2) {
+        ctx.strokeStyle = "rgba(16, 185, 129, 0.65)";
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(samples[0].x, samples[0].y);
+        for (let i = 1; i < samples.length; i++) {
+          ctx.lineTo(samples[i].x, samples[i].y);
+        }
+        ctx.stroke();
+      }
+
+      // Live Pyth Price Indicator Pin on Corridor
+      ctx.fillStyle = "#10B981";
+      ctx.beginPath();
+      ctx.arc(width - 24, corr.smoothedY, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Live Corridor Header Label
+      ctx.font = "bold 10px system-ui, -apple-system, sans-serif";
+      ctx.fillStyle = "#059669";
+      ctx.textAlign = "start";
+      ctx.fillText(`⚡ PYTH LIVE PREDICTION CHANNEL • SURF TO CHARGE 5X`, 140, corr.topY + 16);
 
       // Render Exhaust Particles
       particlesRef.current.forEach((p) => {
@@ -562,44 +525,39 @@ export function RocketClashGame() {
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
       });
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = 1.0;
 
-      // Render Rockets
-      const renderRocket = (r: RocketState, x: number) => {
-        if (r.liquidated) return;
-
+      // Render Rockets (Apple Clean Vector Style)
+      const renderAppleRocket = (r: RocketState, x: number) => {
         ctx.save();
         ctx.translate(x, r.y);
         ctx.rotate((r.tilt * Math.PI) / 180);
 
-        // Thruster flame
-        if (r.thrusting) {
-          ctx.fillStyle = r.flameColor;
+        // Ambient Soft Shadow under rocket
+        ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
+        ctx.beginPath();
+        ctx.ellipse(0, 18, 16, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Locked-in Aura Glow when inside corridor
+        if (r.inCorridor) {
+          ctx.strokeStyle = "rgba(16, 185, 129, 0.35)";
+          ctx.lineWidth = 4;
           ctx.beginPath();
-          ctx.moveTo(-16, -4);
-          ctx.lineTo(-30 - Math.random() * 8, 0);
-          ctx.lineTo(-16, 4);
-          ctx.closePath();
-          ctx.fill();
+          ctx.ellipse(0, 0, 26, 16, 0, 0, Math.PI * 2);
+          ctx.stroke();
         }
 
-        // Rocket Body
+        // Rocket Main Fuselage
         ctx.fillStyle = r.color;
         ctx.beginPath();
         ctx.ellipse(0, 0, 20, 11, 0, 0, Math.PI * 2);
         ctx.fill();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
 
-        // Cockpit window
-        ctx.fillStyle = "#FFFFFF";
-        ctx.beginPath();
-        ctx.arc(4, 0, 6, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Avatar inside cockpit
-        ctx.font = "10px sans-serif";
-        ctx.fillText(r.avatar, 0, 3.5);
-
-        // Rocket Nosecone
+        // Rocket Nosecone (Crisp White with subtle hairline)
         ctx.fillStyle = "#FFFFFF";
         ctx.beginPath();
         ctx.moveTo(14, -7);
@@ -607,42 +565,61 @@ export function RocketClashGame() {
         ctx.lineTo(14, 7);
         ctx.closePath();
         ctx.fill();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+        ctx.stroke();
+
+        // Cockpit Window & Avatar
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath();
+        ctx.arc(2, 0, 7.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
+        ctx.stroke();
+
+        ctx.font = "11px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(r.avatar, 2, 4);
 
         // Rocket Fins
-        ctx.fillStyle = r.flameColor;
+        ctx.fillStyle = r.accentColor;
         ctx.beginPath();
         ctx.moveTo(-14, -8);
-        ctx.lineTo(-22, -15);
-        ctx.lineTo(-16, -2);
+        ctx.lineTo(-22, -14);
+        ctx.lineTo(-15, -2);
         ctx.closePath();
         ctx.fill();
 
         ctx.beginPath();
         ctx.moveTo(-14, 8);
-        ctx.lineTo(-22, 15);
-        ctx.lineTo(-16, 2);
+        ctx.lineTo(-22, 14);
+        ctx.lineTo(-15, 2);
         ctx.closePath();
         ctx.fill();
 
-        // Multiplier / Zone Status Tag
+        // Multiplier Pill Badge above rocket
+        ctx.fillStyle = r.inCorridor ? "#10B981" : "#F59E0B";
+        ctx.beginPath();
+        ctx.roundRect(-24, -28, 48, 16, 8);
+        ctx.fill();
+
         ctx.font = "bold 9px monospace";
-        ctx.fillStyle = r.inCorridor ? "#00FFA3" : "#FF6B00";
-        ctx.fillText(`${r.multiplier.toFixed(1)}x`, 0, -18);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText(`${r.multiplier.toFixed(1)}x`, 0, -17);
 
         ctx.restore();
       };
 
-      renderRocket(p1Ref.current, width * 0.28);
-      renderRocket(p2Ref.current, width * 0.44);
+      renderAppleRocket(p1Ref.current, width * 0.28);
+      renderAppleRocket(p2Ref.current, width * 0.44);
 
       animFrameId.current = requestAnimationFrame(render);
     };
 
     animFrameId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameId.current);
-  }, [gameState, gameMode]);
+  }, [gameState, gameMode, selectedAsset]);
 
-  // Touch and pointer handlers for P1
+  // Touch & Pointer handlers for P1
   const handleP1PointerDown = () => {
     if (gameState !== "playing") return;
     p1Ref.current.thrusting = true;
@@ -654,7 +631,7 @@ export function RocketClashGame() {
     soundEngine.stopThrust();
   };
 
-  // Touch and pointer handlers for P2
+  // Touch & Pointer handlers for P2
   const handleP2PointerDown = () => {
     if (gameState !== "playing" || gameMode !== "versus") return;
     p2Ref.current.thrusting = true;
@@ -675,49 +652,49 @@ export function RocketClashGame() {
   const priceDeltaPercent = strikePrice > 0 ? (priceDelta / strikePrice) * 100 : 0;
 
   return (
-    <div className="flex flex-col items-center w-full max-w-5xl mx-auto px-4 py-6 font-sans select-none text-slate-100">
+    <div className="flex flex-col items-center w-full max-w-5xl mx-auto px-4 py-6 font-sans select-none text-slate-900">
       {/* 1. Top Navigation & Status */}
       <div className="w-full flex items-center justify-between mb-4">
         <Link
           href="/"
-          className="flex items-center gap-2 text-sm font-mono text-purple-300 hover:text-white transition-colors p-2 rounded-xl hover:bg-purple-900/30"
+          className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors p-2 rounded-xl hover:bg-black/[0.04]"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Exit to Arena</span>
+          <span>Back to Arena</span>
         </Link>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-purple-950/60 border border-purple-500/30 text-xs font-mono text-purple-200">
-            <Radio className={`w-3.5 h-3.5 ${isLive ? "text-emerald-400 animate-pulse" : "text-amber-400"}`} />
-            <span>Pyth Oracle Live</span>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-black/[0.06] shadow-sm text-xs font-medium text-slate-700">
+            <Radio className={`w-3.5 h-3.5 ${isLive ? "text-emerald-500 animate-pulse" : "text-amber-500"}`} />
+            <span>Pyth Live Feed</span>
           </div>
 
           <button
             onClick={toggleSound}
-            className="p-2 rounded-xl bg-purple-950/60 border border-purple-500/30 text-purple-300 hover:text-white hover:bg-purple-900/40 transition-all"
-            title={isMuted ? "Unmute" : "Mute"}
+            className="p-2 rounded-xl bg-white border border-black/[0.06] shadow-sm text-slate-600 hover:text-slate-900 hover:bg-black/[0.02] transition-all"
+            title={isMuted ? "Unmute sound" : "Mute sound"}
           >
-            {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
+            {isMuted ? <VolumeX className="w-4 h-4 text-red-500" /> : <Volume2 className="w-4 h-4 text-slate-700" />}
           </button>
         </div>
       </div>
 
-      {/* 2. Oracle Market Ribbon & Escrow Pot */}
-      <div className="w-full bg-gradient-to-r from-purple-950/80 via-[#140029] to-purple-950/80 border border-purple-500/30 rounded-2xl p-4 mb-4 shadow-xl shadow-purple-950/40 flex flex-wrap items-center justify-between gap-4">
+      {/* 2. Apple Design Market Banner & Escrow Pot */}
+      <div className="w-full bg-white border border-black/[0.06] rounded-2xl p-4 mb-4 shadow-[0_2px_10px_rgba(0,0,0,0.035)] flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <AssetLogo symbol={selectedAsset} size={32} />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-white text-base font-mono">{selectedAsset}/USD</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-purple-900/60 text-purple-300 font-mono">
-                Strike: ${strikePrice.toFixed(selectedAsset === "BTC" ? 1 : 3)}
+              <span className="font-bold text-slate-900 text-base">{selectedAsset}/USD</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
+                Strike: ${strikePrice.toFixed(selectedAsset === "BTC" ? 1 : 2)}
               </span>
             </div>
-            <div className="text-xs text-purple-300/80 flex items-center gap-2 mt-0.5 font-mono">
-              <span>Now: ${currentPrice.toFixed(selectedAsset === "BTC" ? 1 : 3)}</span>
+            <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+              <span>Now: ${currentPrice.toFixed(selectedAsset === "BTC" ? 1 : 2)}</span>
               <span
-                className={`font-bold flex items-center gap-0.5 ${
-                  priceDeltaPercent >= 0 ? "text-emerald-400" : "text-rose-400"
+                className={`font-mono font-bold flex items-center gap-0.5 ${
+                  priceDeltaPercent >= 0 ? "text-emerald-600" : "text-rose-600"
                 }`}
               >
                 {priceDeltaPercent >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
@@ -728,100 +705,96 @@ export function RocketClashGame() {
           </div>
         </div>
 
-        {/* Live Corridor Status Indicator */}
-        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-purple-900/40 border border-purple-500/20">
-          <div className="text-right">
-            <div className="text-[10px] font-mono text-purple-300/70 uppercase">Prediction Channel</div>
-            <div className="text-xs font-mono font-bold text-emerald-400 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span>ORACLE WAVE ACTIVE</span>
-            </div>
+        {/* Live Oracle Wave Status */}
+        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
+          <Activity className="w-4 h-4 text-emerald-600" />
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Oracle Trajectory</div>
+            <div className="text-xs font-bold text-slate-800 font-mono">Real-Time Pyth Tracking</div>
           </div>
         </div>
 
-        {/* Guaranteed 5% Protocol Rake Pot */}
-        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-[#836EF9]/10 border border-[#836EF9]/30">
-          <Coins className="w-5 h-5 text-purple-400" />
+        {/* Escrow Pot & Protocol Rake */}
+        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-[#6E4EF4]/5 border border-[#6E4EF4]/15">
+          <Coins className="w-5 h-5 text-[#6E4EF4]" />
           <div>
-            <div className="text-[10px] font-mono text-purple-300/80 uppercase">Escrow Pot (5% Rake)</div>
-            <div className="text-xs font-bold text-white font-mono">
+            <div className="text-[10px] font-semibold text-[#6E4EF4] uppercase tracking-wider">Escrow Pot (5% Rake)</div>
+            <div className="text-xs font-bold text-slate-900 font-mono">
               {totalPot} MON • Winner: {netPayout} MON
             </div>
           </div>
         </div>
       </div>
 
-      {/* 3. Live HUD & Multipliers */}
+      {/* 3. Live HUD Multipliers (Apple Clean Design) */}
       <div className="w-full grid grid-cols-2 gap-3 mb-3">
         {/* P1 Player HUD */}
         <div
-          className={`p-3.5 rounded-2xl border transition-all ${
+          className={`p-3.5 rounded-2xl bg-white border transition-all ${
             p1Telemetry.inZone
-              ? "bg-purple-950/70 border-emerald-400/60 shadow-lg shadow-emerald-500/10"
-              : "bg-purple-950/40 border-purple-500/20"
+              ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm"
+              : "border-black/[0.06]"
           }`}
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <span className="text-xl">🟣</span>
               <div>
-                <div className="text-xs font-mono text-purple-200 font-bold">Gmonad Alpha (You)</div>
-                <div className="text-[10px] font-mono text-purple-400">HOLD [SPACE] / [W]</div>
+                <div className="text-xs font-bold text-slate-900">Gmonad Alpha (You)</div>
+                <div className="text-[11px] text-slate-500 font-mono">
+                  {p1Telemetry.inZone ? "LOCKED IN CORRIDOR ⚡" : "OUTSIDE CHANNEL"}
+                </div>
               </div>
             </div>
             <div className="text-right">
               <div
                 className={`text-xl font-black font-mono tracking-tight ${
-                  p1Telemetry.inZone ? "text-emerald-400" : "text-purple-300"
+                  p1Telemetry.inZone ? "text-emerald-600" : "text-slate-700"
                 }`}
               >
                 {p1Telemetry.mult}x
               </div>
-              <div className="text-[10px] font-mono text-purple-400">
-                Score: {p1Telemetry.score}
-              </div>
+              <div className="text-[10px] font-mono text-slate-400">Score: {p1Telemetry.score}</div>
             </div>
           </div>
         </div>
 
         {/* P2 Rival HUD */}
         <div
-          className={`p-3.5 rounded-2xl border transition-all ${
+          className={`p-3.5 rounded-2xl bg-white border transition-all ${
             p2Telemetry.inZone
-              ? "bg-purple-950/70 border-emerald-400/60 shadow-lg shadow-emerald-500/10"
-              : "bg-purple-950/40 border-purple-500/20"
+              ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm"
+              : "border-black/[0.06]"
           }`}
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <span className="text-xl">{gameMode === "solo" ? "🤖" : "🐸"}</span>
               <div>
-                <div className="text-xs font-mono text-emerald-300 font-bold">
-                  {gameMode === "solo" ? "MemeBot AI" : "Pepe Rival"}
+                <div className="text-xs font-bold text-slate-900">
+                  {gameMode === "solo" ? "MemeBot AI" : "Rival Challenger"}
                 </div>
-                <div className="text-[10px] font-mono text-emerald-400/80">
-                  {gameMode === "solo" ? "ORACLE FOLLOWER" : "HOLD [ARROW UP]"}
+                <div className="text-[11px] text-slate-500 font-mono">
+                  {p2Telemetry.inZone ? "LOCKED IN CORRIDOR ⚡" : "OUTSIDE CHANNEL"}
                 </div>
               </div>
             </div>
             <div className="text-right">
               <div
                 className={`text-xl font-black font-mono tracking-tight ${
-                  p2Telemetry.inZone ? "text-emerald-400" : "text-emerald-300/80"
+                  p2Telemetry.inZone ? "text-emerald-600" : "text-slate-700"
                 }`}
               >
                 {p2Telemetry.mult}x
               </div>
-              <div className="text-[10px] font-mono text-emerald-400/80">
-                Score: {p2Telemetry.score}
-              </div>
+              <div className="text-[10px] font-mono text-slate-400">Score: {p2Telemetry.score}</div>
             </div>
           </div>
         </div>
       </div>
 
       {/* 4. Canvas Arena */}
-      <div className="relative w-full rounded-3xl overflow-hidden border-2 border-purple-500/30 shadow-2xl shadow-purple-950/70 bg-[#090014]">
+      <div className="relative w-full rounded-2xl overflow-hidden border border-black/[0.08] shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white">
         <canvas
           ref={canvasRef}
           width={880}
@@ -831,34 +804,34 @@ export function RocketClashGame() {
 
         {/* Live Timer Pill */}
         {gameState === "playing" && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-purple-950/80 border border-purple-400/40 shadow-lg backdrop-blur-md flex items-center gap-2 text-xs font-mono text-white">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-white/95 border border-black/[0.08] shadow-sm flex items-center gap-2 text-xs font-bold text-slate-800 font-mono">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
             <span>Time Left: {timeLeft}s</span>
           </div>
         )}
 
         {/* Pre-Round Launch Overlay */}
         {gameState === "idle" && (
-          <div className="absolute inset-0 bg-[#090014]/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
-            <div className="p-3.5 rounded-2xl bg-purple-500/20 border border-purple-400/40 text-purple-300 mb-3 shadow-lg shadow-purple-500/20">
-              <Flame className="w-8 h-8 text-orange-400" />
+          <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
+            <div className="w-14 h-14 rounded-2xl bg-[#6E4EF4]/10 text-[#6E4EF4] flex items-center justify-center mb-3">
+              <Flame className="w-7 h-7" />
             </div>
 
-            <h2 className="text-2xl sm:text-3xl font-black text-white uppercase tracking-wider mb-2">
-              Rocket Clash: Surf the Corridor
+            <h2 className="text-2xl font-bold text-slate-900 mb-1.5">
+              Rocket Clash: Surf the Pyth Channel
             </h2>
 
-            <p className="text-xs sm:text-sm text-purple-200/80 max-w-md mb-6 leading-relaxed font-mono">
-              Hold thrusters to surf inside the Pyth Green Corridor. Charge up to 5x multipliers without hitting boundaries!
+            <p className="text-xs text-slate-500 max-w-md mb-6 leading-relaxed">
+              Pilot your rocket inside the real-time Pyth price corridor. Charge up to 5x multipliers by holding the line!
             </p>
 
-            <div className="flex items-center gap-2 mb-6 bg-purple-950/60 p-1.5 rounded-2xl border border-purple-500/20">
+            <div className="flex items-center gap-2 mb-6 bg-slate-100 p-1.5 rounded-2xl">
               <button
                 onClick={() => setGameMode("solo")}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all ${
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
                   gameMode === "solo"
-                    ? "bg-[#836EF9] text-white shadow-md shadow-purple-600/30"
-                    : "text-purple-300 hover:text-white"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
                 }`}
               >
                 <User className="w-3.5 h-3.5" />
@@ -866,72 +839,93 @@ export function RocketClashGame() {
               </button>
               <button
                 onClick={() => setGameMode("versus")}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all ${
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
                   gameMode === "versus"
-                    ? "bg-[#836EF9] text-white shadow-md shadow-purple-600/30"
-                    : "text-purple-300 hover:text-white"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
                 }`}
               >
                 <Users className="w-3.5 h-3.5" />
-                1v1 Dual Split
+                1v1 Split
               </button>
+            </div>
+
+            <div className="flex items-center gap-2 mb-6">
+              <span className="text-xs font-semibold text-slate-500 uppercase">Asset:</span>
+              {(["MON", "BTC", "ETH", "SOL"] as SupportedAsset[]).map((a) => (
+                <button
+                  key={a}
+                  onClick={() => setSelectedAsset(a)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                    selectedAsset === a
+                      ? "bg-slate-900 text-white font-bold"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {a}
+                </button>
+              ))}
             </div>
 
             <button
               onClick={startGame}
-              className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-[#836EF9] to-[#6344E7] text-white font-mono font-bold text-sm tracking-widest uppercase hover:brightness-110 active:scale-95 transition-all shadow-xl shadow-purple-600/40"
+              className="px-8 py-3 rounded-2xl bg-[#6E4EF4] text-white font-semibold text-sm hover:bg-[#5b3ce0] active:scale-95 transition-all shadow-md shadow-purple-600/20"
             >
-              Launch Clash Round (20s)
+              Start Duel (0.25 MON)
             </button>
           </div>
         )}
 
         {/* Game Over Settlement Modal */}
         {gameState === "gameover" && (
-          <div className="absolute inset-0 bg-[#090014]/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
-            <div className="p-3.5 rounded-2xl bg-amber-500/20 border border-amber-400/40 text-amber-300 mb-3 shadow-lg shadow-amber-500/30">
-              <Trophy className="w-8 h-8" />
+          <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
+            <div className="w-16 h-16 rounded-2xl bg-[#6E4EF4]/10 text-3xl flex items-center justify-center mb-3">
+              <Trophy className="w-8 h-8 text-[#6E4EF4]" />
             </div>
 
-            <div className="text-xs font-mono text-purple-300 uppercase tracking-widest mb-1">
-              Round Complete
-            </div>
-
-            <h3 className="text-3xl font-black text-white uppercase mb-2">
-              {winner === "P1" ? "Gmonad Alpha Wins! 🎉" : winner === "P2" ? "Pepe Rocket Wins! 🐸" : "Tie Clash! 🤝"}
+            <h3 className="text-2xl font-bold text-slate-900 mb-1">
+              {winner === "P1" ? "Victory! You Held the Line 🏆" : winner === "P2" ? "Rival Won the Clash 🤖" : "Dead Heat Tie ⚖️"}
             </h3>
 
-            <p className="text-xs text-purple-200/80 mb-5 font-mono">
-              Net Payout: <span className="text-emerald-400 font-bold">{netPayout} MON</span> • 5.0% Protocol Rake to Treasury
+            <p className="text-xs text-slate-500 mb-5 font-mono">
+              Net Payout: <span className="text-[#6E4EF4] font-bold">{netPayout} MON</span> • 5.0% Protocol Rake
             </p>
 
             <div className="grid grid-cols-2 gap-4 w-full max-w-xs mb-6">
-              <div className="p-3 rounded-xl bg-purple-950/80 border border-purple-500/30 text-center">
-                <div className="text-[10px] text-purple-300 font-mono">P1 SCORE (x{p1Ref.current.multiplier.toFixed(1)})</div>
-                <div className="text-lg font-black text-white font-mono">
+              <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.06] text-center">
+                <div className="text-[10px] text-slate-400 font-mono">P1 SCORE (x{p1Ref.current.multiplier.toFixed(1)})</div>
+                <div className="text-lg font-bold text-slate-900 font-mono">
                   {Math.floor(p1Ref.current.score * p1Ref.current.multiplier)}
                 </div>
               </div>
-              <div className="p-3 rounded-xl bg-purple-950/80 border border-purple-500/30 text-center">
-                <div className="text-[10px] text-emerald-300 font-mono">P2 SCORE (x{p2Ref.current.multiplier.toFixed(1)})</div>
-                <div className="text-lg font-black text-white font-mono">
+              <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.06] text-center">
+                <div className="text-[10px] text-slate-400 font-mono">P2 SCORE (x{p2Ref.current.multiplier.toFixed(1)})</div>
+                <div className="text-lg font-bold text-slate-900 font-mono">
                   {Math.floor(p2Ref.current.score * p2Ref.current.multiplier)}
                 </div>
               </div>
             </div>
 
-            <button
-              onClick={startGame}
-              className="flex items-center gap-2 px-7 py-3 rounded-2xl bg-gradient-to-r from-[#836EF9] to-[#00FFA3] text-slate-950 font-mono font-bold text-sm tracking-wider uppercase hover:brightness-110 active:scale-95 transition-all shadow-xl shadow-purple-600/30"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Play Rematch
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={startGame}
+                className="px-6 py-2.5 rounded-xl bg-[#6E4EF4] text-white font-semibold text-sm hover:bg-[#5b3ce0] active:scale-95 transition-all shadow-md flex items-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Play Rematch
+              </button>
+              <button
+                onClick={() => setGameState("idle")}
+                className="px-4 py-2.5 rounded-xl bg-white border border-black/[0.08] text-slate-700 font-medium text-sm hover:bg-slate-50 active:scale-95 transition-all"
+              >
+                Settings
+              </button>
+            </div>
           </div>
         )}
       </div>
 
-      {/* 5. Direct Physical Controls (Touch & Keyboard) */}
+      {/* 5. Direct Tactile Controls (Apple Native Style) */}
       <div className="w-full mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* P1 Controls Button */}
         <button
@@ -939,87 +933,87 @@ export function RocketClashGame() {
           onPointerUp={handleP1PointerUp}
           onPointerLeave={handleP1PointerUp}
           onPointerCancel={handleP1PointerUp}
-          className="relative group p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-purple-900/60 to-purple-950/90 border-2 border-purple-500/30 hover:border-purple-400 active:scale-[0.98] transition-all flex items-center justify-between shadow-lg shadow-purple-950/40 cursor-pointer touch-none"
+          className="p-4 sm:p-5 rounded-2xl bg-white border border-black/[0.08] hover:border-[#6E4EF4] active:scale-[0.98] transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none"
         >
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#836EF9]/30 border border-purple-400/40 flex items-center justify-center text-xl">
+            <div className="w-11 h-11 rounded-xl bg-[#6E4EF4]/10 text-xl flex items-center justify-center">
               🟣
             </div>
             <div className="text-left">
-              <div className="text-xs font-mono text-purple-300 uppercase">P1 • Hold to Thrust</div>
-              <div className="text-sm font-black text-white font-mono">HOLD [SPACE] / [W]</div>
+              <div className="text-xs font-bold text-slate-900">P1 • Hold to Fire Thrusters</div>
+              <div className="text-xs text-slate-500 font-mono mt-0.5">HOLD [SPACE] / [W] OR TAP</div>
             </div>
           </div>
-          <Flame className="w-6 h-6 text-orange-400 group-active:scale-125 transition-transform" />
+          <Flame className="w-6 h-6 text-[#6E4EF4] group-active:scale-125 transition-transform" />
         </button>
 
-        {/* P2 Controls Button (Versus mode or Auto AI in Solo) */}
+        {/* P2 Controls Button */}
         {gameMode === "versus" ? (
           <button
             onPointerDown={handleP2PointerDown}
             onPointerUp={handleP2PointerUp}
             onPointerLeave={handleP2PointerUp}
             onPointerCancel={handleP2PointerUp}
-            className="relative group p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-emerald-950/60 to-teal-950/90 border-2 border-emerald-500/30 hover:border-emerald-400 active:scale-[0.98] transition-all flex items-center justify-between shadow-lg shadow-emerald-950/40 cursor-pointer touch-none"
+            className="p-4 sm:p-5 rounded-2xl bg-white border border-black/[0.08] hover:border-emerald-500 active:scale-[0.98] transition-all flex items-center justify-between shadow-sm cursor-pointer touch-none"
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/30 border border-emerald-400/40 flex items-center justify-center text-xl">
+              <div className="w-11 h-11 rounded-xl bg-emerald-50 text-xl flex items-center justify-center">
                 🐸
               </div>
               <div className="text-left">
-                <div className="text-xs font-mono text-emerald-300 uppercase">P2 • Hold to Thrust</div>
-                <div className="text-sm font-black text-white font-mono">HOLD [ARROW UP]</div>
+                <div className="text-xs font-bold text-slate-900">P2 • Hold to Fire Thrusters</div>
+                <div className="text-xs text-slate-500 font-mono mt-0.5">HOLD [ARROW UP]</div>
               </div>
             </div>
-            <Flame className="w-6 h-6 text-emerald-400 group-active:scale-125 transition-transform" />
+            <Flame className="w-6 h-6 text-emerald-600 group-active:scale-125 transition-transform" />
           </button>
         ) : (
-          <div className="p-4 sm:p-5 rounded-2xl bg-purple-950/40 border border-purple-500/10 flex items-center justify-between opacity-80">
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-400/20 flex items-center justify-center text-xl">
+              <div className="w-11 h-11 rounded-xl bg-slate-200 flex items-center justify-center text-xl">
                 🤖
               </div>
               <div>
-                <div className="text-xs font-mono text-purple-300 uppercase">MemeBot AI Opponent</div>
-                <div className="text-xs text-purple-300/70 font-mono">Auto-tracking Pyth target channel</div>
+                <div className="text-xs font-bold text-slate-900">MemeBot AI Rival</div>
+                <div className="text-xs text-slate-500 font-mono">Auto-tracking Pyth target channel</div>
               </div>
             </div>
-            <div className="text-[10px] font-mono px-2 py-1 rounded bg-purple-900/60 text-emerald-300">
+            <div className="text-[10px] font-mono px-2 py-1 rounded bg-slate-200 text-slate-700 font-semibold">
               BOT ACTIVE
             </div>
           </div>
         )}
       </div>
 
-      {/* 6. Economic Soundness & Mechanics Info Panel */}
-      <div className="w-full mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="p-3.5 rounded-xl bg-purple-950/40 border border-purple-500/20">
-          <div className="text-xs font-bold text-white flex items-center gap-1.5 mb-1">
-            <Zap className="w-3.5 h-3.5 text-purple-400" />
-            Pyth Oracle Wave
+      {/* 6. Apple Design Economics & Mechanics Cards */}
+      <div className="w-full mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
+            <Zap className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            Real Pyth Oracle Dynamic
           </div>
-          <p className="text-[11px] text-purple-300/70 leading-relaxed">
-            El corredor de predicción se mueve con la volatilidad real de Pyth. Si la crypto sube, el canal escala; si baja, desciende.
+          <p className="text-xs text-slate-500 leading-relaxed">
+            The target corridor directly maps to real-time Pyth price movements. When the market rallies, the channel climbs; when it dumps, it descends.
           </p>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-purple-950/40 border border-purple-500/20">
-          <div className="text-xs font-bold text-white flex items-center gap-1.5 mb-1">
-            <ShieldAlert className="w-3.5 h-3.5 text-orange-400" />
-            Multiplicador de Precisión (1x a 5x)
+        <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
+            <Gauge className="w-3.5 h-3.5 text-emerald-600" />
+            Precision Multiplier (1x to 5x)
           </div>
-          <p className="text-[11px] text-purple-300/70 leading-relaxed">
-            Pilotar dentro del canal acumula racha y sube tu multiplicador hasta 5x. Salirte del canal enfría tu puntaje.
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Piloting inside the channel builds your score multiplier up to 5x. Staying outside causes the multiplier to cool down.
           </p>
         </div>
 
-        <div className="p-3.5 rounded-xl bg-purple-950/40 border border-purple-500/20">
-          <div className="text-xs font-bold text-white flex items-center gap-1.5 mb-1">
-            <Percent className="w-3.5 h-3.5 text-emerald-400" />
-            Economía P2P Blindada (5% Rake)
+        <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
+            <Percent className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            5.0% Protocol Rake
           </div>
-          <p className="text-[11px] text-purple-300/70 leading-relaxed">
-            Pozo cerrado de 0.50 MON. La casa retiene 0.025 MON fijo. CERO subsidios ni riesgo de insolvencia para la casa.
+          <p className="text-xs text-slate-500 leading-relaxed">
+            0.50 MON total pot. 0.025 MON goes to the Duelio Treasury on every match. Zero insolvency risk for the house.
           </p>
         </div>
       </div>
