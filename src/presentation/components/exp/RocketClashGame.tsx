@@ -22,6 +22,8 @@ import {
   XCircle,
   ShieldCheck,
   Scale,
+  Gauge,
+  Skull,
 } from "lucide-react";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
@@ -33,13 +35,29 @@ interface RocketState {
   tilt: number;
   thrusting: boolean;
   multiplier: number;
-  chargeTime: number; // Seconds spent in valid zone
+  chargeTime: number;
   inZone: boolean;
   name: string;
   avatar: string;
   color: string;
   flameColor: string;
   side: "BULL" | "BEAR";
+  heat: number; // 0 to 100
+  overheated: boolean;
+  overheatTimer: number;
+}
+
+interface Obstacle {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  icon: string;
+  label: string;
+  color: string;
+  hit: boolean;
 }
 
 interface Particle {
@@ -96,8 +114,8 @@ export function RocketClashGame() {
   }, [currentPrice, gameState]);
 
   // Live HUD telemetry
-  const [p1Telemetry, setP1Telemetry] = useState({ mult: 1.0, inZone: false, chargePercent: 0 });
-  const [p2Telemetry, setP2Telemetry] = useState({ mult: 1.0, inZone: false, chargePercent: 0 });
+  const [p1Telemetry, setP1Telemetry] = useState({ mult: 1.0, inZone: false, chargePercent: 0, heat: 0, overheated: false });
+  const [p2Telemetry, setP2Telemetry] = useState({ mult: 1.0, inZone: false, chargePercent: 0, heat: 0, overheated: false });
 
   // Physics & Animation references
   const animFrameId = useRef<number>(0);
@@ -116,6 +134,9 @@ export function RocketClashGame() {
     color: "#836EF9",
     flameColor: "#FF6B00",
     side: "BULL",
+    heat: 0,
+    overheated: false,
+    overheatTimer: 0,
   });
 
   const p2Ref = useRef<RocketState>({
@@ -131,10 +152,15 @@ export function RocketClashGame() {
     color: "#10B981",
     flameColor: "#059669",
     side: "BEAR",
+    heat: 0,
+    overheated: false,
+    overheatTimer: 0,
   });
 
   const particlesRef = useRef<Particle[]>([]);
   const cloudsRef = useRef<Cloud[]>([]);
+  const obstaclesRef = useRef<Obstacle[]>([]);
+  const nextObstacleSpawnRef = useRef<number>(0);
 
   // Audio toggle
   const toggleSound = () => {
@@ -159,25 +185,38 @@ export function RocketClashGame() {
     cloudsRef.current = clouds;
   }, []);
 
-  // Keyboard controls
+  // Keyboard controls with scroll prevention
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Prevent page scrolling on Space and Arrow keys
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowDown") {
+        e.preventDefault();
+      }
+
       if (gameState !== "playing") return;
+
       if (e.code === "KeyW" || e.code === "Space") {
-        if (!p1Ref.current.thrusting) {
-          p1Ref.current.thrusting = true;
+        const p1 = p1Ref.current;
+        if (!p1.thrusting && !p1.overheated) {
+          p1.thrusting = true;
           soundEngine.startThrust(true);
         }
       }
+
       if (e.code === "ArrowUp") {
-        if (gameMode === "versus" && !p2Ref.current.thrusting) {
-          p2Ref.current.thrusting = true;
+        const p2 = p2Ref.current;
+        if (gameMode === "versus" && !p2.thrusting && !p2.overheated) {
+          p2.thrusting = true;
           soundEngine.startThrust(false);
         }
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowDown") {
+        e.preventDefault();
+      }
+
       if (e.code === "KeyW" || e.code === "Space") {
         p1Ref.current.thrusting = false;
         soundEngine.stopThrust();
@@ -188,8 +227,8 @@ export function RocketClashGame() {
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("keydown", handleKeyDown, { passive: false });
+    window.addEventListener("keyup", handleKeyUp, { passive: false });
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
@@ -208,9 +247,7 @@ export function RocketClashGame() {
     setStrikePrice(lockedPrice);
     strikePriceRef.current = lockedPrice;
 
-    // Set player sides based on gameMode:
-    // In Versus: P1 is BULL (🟣), P2 is BEAR (🐸)
-    // In Solo: P1 chooses stance (BULL or BEAR), opponent is House
+    // Determine player sides
     const p1Side = gameMode === "versus" ? "BULL" : playerStance;
     const p2Side = p1Side === "BULL" ? "BEAR" : "BULL";
 
@@ -223,6 +260,9 @@ export function RocketClashGame() {
       multiplier: 1.0,
       chargeTime: 0,
       side: p1Side,
+      heat: 0,
+      overheated: false,
+      overheatTimer: 0,
     };
 
     p2Ref.current = {
@@ -234,9 +274,14 @@ export function RocketClashGame() {
       multiplier: 1.0,
       chargeTime: 0,
       side: p2Side,
+      heat: 0,
+      overheated: false,
+      overheatTimer: 0,
     };
 
     particlesRef.current = [];
+    obstaclesRef.current = [];
+    nextObstacleSpawnRef.current = performance.now() + 1500;
 
     if (roundTimerRef.current) clearInterval(roundTimerRef.current);
 
@@ -245,7 +290,7 @@ export function RocketClashGame() {
       seconds--;
       setTimeLeft(seconds);
 
-      // Tension tick sound in the final 10 seconds of crypto volatility
+      // Tension tick sound in the final 10 seconds
       if (seconds <= 10 && seconds > 0) {
         soundEngine.playCountdownTick(seconds <= 5);
       }
@@ -260,7 +305,6 @@ export function RocketClashGame() {
         const finalPrice = currentPriceRef.current;
         const initial = strikePriceRef.current;
 
-        // Decimal precision check for exact draw
         const isDraw = Math.abs(finalPrice - initial) < 0.00000001;
         if (isDraw) {
           setWinningSide("DRAW");
@@ -272,15 +316,12 @@ export function RocketClashGame() {
         setWinningSide(outcomeSide);
 
         if (gameMode === "versus") {
-          // P2P 1v1 Mode: Escrow Winner Takes All
-          // P1 is always Bull, P2 is always Bear
           if (outcomeSide === "BULL") {
             setWinner("P1");
           } else {
             setWinner("P2");
           }
         } else {
-          // Solo vs House Mode
           if (p1Ref.current.side === outcomeSide) {
             setWinner("P1");
           } else {
@@ -308,18 +349,49 @@ export function RocketClashGame() {
       const height = canvas.height;
       const strikeCenterY = height * 0.5;
 
-      // 1. UPDATE PHYSICS & TELEMETRY
+      // 1. UPDATE PHYSICS, HAZARDS & HEAT
       if (gameState === "playing") {
-        // Solo Mode AI behavior: tries to stay in its assigned zone
+        // Spawn Enemies / Crypto Hazards
+        if (time > nextObstacleSpawnRef.current) {
+          nextObstacleSpawnRef.current = time + 2600 + Math.random() * 1600;
+          const hazardTypes = [
+            { icon: "🕯️", label: "Red Wick", color: "#EF4444" },
+            { icon: "📜", label: "SEC Subpoena", color: "#F59E0B" },
+            { icon: "⛽", label: "500 Gwei", color: "#8B5CF6" },
+            { icon: "⚡", label: "MEV Sniper", color: "#EC4899" },
+          ];
+          const chosen = hazardTypes[Math.floor(Math.random() * hazardTypes.length)];
+          obstaclesRef.current.push({
+            id: Math.random(),
+            x: width + 30,
+            y: 70 + Math.random() * (height - 130),
+            vx: -(2.0 + Math.random() * 1.2),
+            vy: (Math.random() - 0.5) * 0.5,
+            radius: 16,
+            icon: chosen.icon,
+            label: chosen.label,
+            color: chosen.color,
+            hit: false,
+          });
+        }
+
+        // Move and filter obstacles
+        obstaclesRef.current.forEach((obs) => {
+          obs.x += obs.vx;
+          obs.y += obs.vy;
+        });
+        obstaclesRef.current = obstaclesRef.current.filter((obs) => obs.x > -50 && !obs.hit);
+
+        // Solo Mode AI behavior: tries to stay in its assigned zone and dodge obstacles
         if (gameMode === "solo") {
           const p2 = p2Ref.current;
-          const targetY = p2.side === "BULL" ? height * 0.25 : height * 0.75;
-          const targetJitter = targetY + Math.sin(time * 0.003) * 18;
+          const targetY = p2.side === "BULL" ? height * 0.28 : height * 0.72;
+          const targetJitter = targetY + Math.sin(time * 0.003) * 16;
           const distance = p2.y - targetJitter;
 
-          if (distance > 6 && p2.vy > -1.2) {
+          if (distance > 6 && p2.vy > -1.2 && !p2.overheated && p2.heat < 85) {
             p2.thrusting = true;
-          } else if (distance < -6 && p2.vy < 1.0) {
+          } else if (distance < -6 || p2.heat > 85) {
             p2.thrusting = false;
           }
         }
@@ -328,13 +400,37 @@ export function RocketClashGame() {
         [p1Ref.current, p2Ref.current].forEach((r, idx) => {
           const gravity = 0.36;
           const thrust = -0.78;
+          const rocketX = idx === 0 ? width * 0.28 : width * 0.44;
 
-          if (r.thrusting) {
+          // Engine Heat Accumulation & Cooling
+          if (r.thrusting && !r.overheated) {
+            r.heat = Math.min(100, r.heat + 0.88);
+            if (r.heat >= 100) {
+              r.overheated = true;
+              r.overheatTimer = 1.7; // 1.7s engine stall
+              r.thrusting = false;
+              soundEngine.stopThrust();
+              soundEngine.playStallSound();
+            }
+          } else if (!r.thrusting) {
+            r.heat = Math.max(0, r.heat - 1.2);
+          }
+
+          // Cool-down recovery timer if overheated
+          if (r.overheated) {
+            r.overheatTimer -= dt;
+            if (r.overheatTimer <= 0) {
+              r.overheated = false;
+              r.heat = 40; // Starts cool
+            }
+          }
+
+          // Thruster particle exhaust
+          if (r.thrusting && !r.overheated) {
             r.vy += thrust;
-            // Exhaust particles
             for (let i = 0; i < 2; i++) {
               particlesRef.current.push({
-                x: idx === 0 ? width * 0.28 : width * 0.44,
+                x: rocketX,
                 y: r.y + 14,
                 vx: (Math.random() - 0.5) * 1.5 - 2,
                 vy: Math.random() * 2 + 0.8,
@@ -343,6 +439,17 @@ export function RocketClashGame() {
                 color: r.flameColor,
               });
             }
+          } else if (r.overheated) {
+            // Sputtering stall smoke
+            particlesRef.current.push({
+              x: rocketX,
+              y: r.y + 10,
+              vx: (Math.random() - 0.5) * 2 - 1,
+              vy: Math.random() * 2,
+              size: Math.random() * 6 + 4,
+              alpha: 0.6,
+              color: "#64748B",
+            });
           }
 
           r.vy += gravity;
@@ -352,25 +459,71 @@ export function RocketClashGame() {
           // Aerodynamic tilt
           r.tilt = Math.max(-22, Math.min(26, r.vy * 3.0));
 
-          // Physical boundaries
-          if (r.y < 28) {
-            r.y = 28;
-            r.vy = 1;
+          // ANTI-CEILING EXPLOIT: Ionosphere Repulsion & Heat Spike
+          if (r.y < 46) {
+            r.y = 46;
+            r.vy = 2.8; // Bounces aggressively downward
+            r.heat = Math.min(100, r.heat + 4.5); // Rapid heating if riding the ceiling
             soundEngine.playLiquidationWarning();
-          }
-          if (r.y > height - 32) {
-            r.y = height - 32;
-            r.vy = -1;
-            soundEngine.playLiquidationWarning();
+
+            // Searing atmospheric sparks
+            for (let s = 0; s < 3; s++) {
+              particlesRef.current.push({
+                x: rocketX + (Math.random() - 0.5) * 20,
+                y: r.y - 6,
+                vx: (Math.random() - 0.5) * 4,
+                vy: Math.random() * 3 + 1,
+                size: 3.5,
+                alpha: 0.9,
+                color: "#EF4444",
+              });
+            }
           }
 
+          // Floor cushion
+          if (r.y > height - 32) {
+            r.y = height - 32;
+            r.vy = -1.6;
+          }
+
+          // Test Obstacle Collision
+          obstaclesRef.current.forEach((obs) => {
+            if (obs.hit) return;
+            const dist = Math.hypot(obs.x - rocketX, obs.y - r.y);
+            if (dist < obs.radius + 14) {
+              obs.hit = true;
+              soundEngine.playHitSound();
+
+              // Knockback & Spin Penalty
+              r.vy = r.y < obs.y ? -3.2 : 3.2;
+              r.tilt += 60;
+              r.heat = Math.min(100, r.heat + 25); // Heat penalty
+
+              // Multiplier penalty in Solo mode
+              if (gameMode === "solo" && idx === 0) {
+                r.multiplier = Math.max(1.0, r.multiplier - 0.4);
+              }
+
+              // Collision burst sparks
+              for (let i = 0; i < 8; i++) {
+                particlesRef.current.push({
+                  x: obs.x,
+                  y: obs.y,
+                  vx: (Math.random() - 0.5) * 6,
+                  vy: (Math.random() - 0.5) * 6,
+                  size: Math.random() * 5 + 3,
+                  alpha: 1.0,
+                  color: obs.color,
+                });
+              }
+            }
+          });
+
           // Check Zone Position:
-          // Bull Zone: y < strikeCenterY (Upper half)
-          // Bear Zone: y >= strikeCenterY (Lower half)
           const inValidZone = r.side === "BULL" ? r.y < strikeCenterY : r.y >= strikeCenterY;
           r.inZone = inValidZone;
 
-          if (inValidZone) {
+          if (inValidZone && !r.overheated && r.y >= 46) {
             r.chargeTime += dt;
             const maxSecondsFor5x = selectedDuration * 0.75;
             r.multiplier = Math.min(5.0, 1.0 + (r.chargeTime / maxSecondsFor5x) * 4.0);
@@ -393,11 +546,15 @@ export function RocketClashGame() {
           mult: Number(p1Ref.current.multiplier.toFixed(2)),
           inZone: p1Ref.current.inZone,
           chargePercent: Math.min(100, Math.floor((p1Ref.current.chargeTime / maxSec) * 100)),
+          heat: Math.floor(p1Ref.current.heat),
+          overheated: p1Ref.current.overheated,
         });
         setP2Telemetry({
           mult: Number(p2Ref.current.multiplier.toFixed(2)),
           inZone: p2Ref.current.inZone,
           chargePercent: Math.min(100, Math.floor((p2Ref.current.chargeTime / maxSec) * 100)),
+          heat: Math.floor(p2Ref.current.heat),
+          overheated: p2Ref.current.overheated,
         });
       }
 
@@ -438,19 +595,36 @@ export function RocketClashGame() {
         ctx.fill();
       });
 
+      // CEILING OVERHEAT FRICTION ZONE (Anti-Camping Barrier)
+      ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+      ctx.fillRect(0, 0, width, 46);
+
+      ctx.strokeStyle = "rgba(239, 68, 68, 0.4)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, 46);
+      ctx.lineTo(width, 46);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.font = "bold 9px system-ui, sans-serif";
+      ctx.fillStyle = "#EF4444";
+      ctx.fillText("⚠️ IONOSPHERE FRICTION ZONE — OVERHEAT DANGER", 18, 20);
+
       // Current Price vs Strike Delta
       const currP = currentPriceRef.current;
       const strikeP = strikePriceRef.current;
       const isPriceBullish = currP >= strikeP;
       const deltaPercent = strikeP > 0 ? (((currP - strikeP) / strikeP) * 100).toFixed(2) : "0.00";
 
-      // UPPER HALF: BULL TERRITORY (Green tint if leading)
+      // UPPER HALF: BULL TERRITORY
       if (isPriceBullish) {
         ctx.fillStyle = "rgba(20, 207, 28, 0.06)";
-        ctx.fillRect(0, 0, width, strikeCenterY);
+        ctx.fillRect(0, 46, width, strikeCenterY - 46);
       }
 
-      // LOWER HALF: BEAR TERRITORY (Red tint if leading)
+      // LOWER HALF: BEAR TERRITORY
       if (!isPriceBullish) {
         ctx.fillStyle = "rgba(255, 59, 48, 0.06)";
         ctx.fillRect(0, strikeCenterY, width, height - strikeCenterY);
@@ -459,11 +633,11 @@ export function RocketClashGame() {
       // UPPER ZONE WATERMARK & LABEL
       ctx.font = "bold 11px system-ui, sans-serif";
       ctx.fillStyle = isPriceBullish ? "#059669" : "#94A3B8";
-      ctx.fillText("▲ BULL ZONE (Wins if Price >= Strike)", 18, 28);
+      ctx.fillText("▲ BULL ZONE (Wins if Price >= Strike)", 18, 65);
       if (isPriceBullish) {
         ctx.font = "bold 10px monospace";
         ctx.fillStyle = "#059669";
-        ctx.fillText(`⚡ CURRENTLY LEADING (+${deltaPercent}%)`, width - 210, 28);
+        ctx.fillText(`⚡ CURRENTLY LEADING (+${deltaPercent}%)`, width - 210, 65);
       }
 
       // LOWER ZONE WATERMARK & LABEL
@@ -476,7 +650,7 @@ export function RocketClashGame() {
         ctx.fillText(`⚡ CURRENTLY LEADING (${deltaPercent}%)`, width - 210, height - 16);
       }
 
-      // HORIZONTAL STRIKE PRICE BARRIER (The Critical Dividing Line)
+      // HORIZONTAL STRIKE PRICE BARRIER
       ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
       ctx.lineWidth = 2;
       ctx.setLineDash([8, 6]);
@@ -486,7 +660,7 @@ export function RocketClashGame() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Strike Price Badge in the Center
+      // Strike Price Badge
       ctx.fillStyle = "#FFFFFF";
       ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
       ctx.lineWidth = 1;
@@ -503,7 +677,34 @@ export function RocketClashGame() {
         width * 0.5,
         strikeCenterY + 4
       );
-      ctx.textAlign = "start"; // Reset text alignment
+      ctx.textAlign = "start";
+
+      // Render Enemies / Crypto Hazards
+      obstaclesRef.current.forEach((obs) => {
+        ctx.save();
+        ctx.translate(obs.x, obs.y);
+
+        // Hazard bubble surface
+        ctx.fillStyle = "#FFFFFF";
+        ctx.strokeStyle = obs.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Icon
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(obs.icon, 0, 5);
+
+        // Label
+        ctx.font = "bold 8px system-ui, sans-serif";
+        ctx.fillStyle = obs.color;
+        ctx.fillText(obs.label, 0, obs.radius + 10);
+
+        ctx.restore();
+      });
 
       // Render Exhaust Particles
       particlesRef.current.forEach((p) => {
@@ -515,14 +716,14 @@ export function RocketClashGame() {
       });
       ctx.globalAlpha = 1.0;
 
-      // Render Rockets (Apple Clean Vectors)
+      // Render Rockets
       const renderRocket = (r: RocketState, x: number) => {
         ctx.save();
         ctx.translate(x, r.y);
         ctx.rotate((r.tilt * Math.PI) / 180);
 
-        // Thruster flame if firing
-        if (r.thrusting) {
+        // Thruster flame if firing and not stalled
+        if (r.thrusting && !r.overheated) {
           ctx.fillStyle = r.flameColor;
           ctx.beginPath();
           ctx.moveTo(-16, -4);
@@ -541,7 +742,7 @@ export function RocketClashGame() {
         }
 
         // Active Zone aura
-        if (r.inZone) {
+        if (r.inZone && !r.overheated) {
           ctx.strokeStyle = r.side === "BULL" ? "rgba(20, 207, 28, 0.6)" : "rgba(239, 68, 68, 0.6)";
           ctx.lineWidth = 2.5;
           ctx.beginPath();
@@ -550,7 +751,7 @@ export function RocketClashGame() {
         }
 
         // Rocket Body
-        ctx.fillStyle = r.color;
+        ctx.fillStyle = r.overheated ? "#94A3B8" : r.color;
         ctx.beginPath();
         ctx.ellipse(0, 0, 20, 11, 0, 0, Math.PI * 2);
         ctx.fill();
@@ -592,15 +793,31 @@ export function RocketClashGame() {
         ctx.stroke();
 
         ctx.font = "11px sans-serif";
-        ctx.fillText(r.avatar, -3.5, 4);
+        ctx.textAlign = "center";
+        ctx.fillText(r.avatar, 2, 4);
 
-        // Player Tag
+        // MINI ENGINE HEAT GAUGE (Overhead bar)
+        const heatBarW = 28;
+        const heatBarH = 3;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+        ctx.fillRect(-14, -28, heatBarW, heatBarH);
+
+        const heatFillW = (r.heat / 100) * heatBarW;
+        ctx.fillStyle = r.overheated ? "#EF4444" : r.heat > 75 ? "#F59E0B" : "#10B981";
+        ctx.fillRect(-14, -28, heatFillW, heatBarH);
+
+        // Status Label above Rocket
         ctx.font = "bold 9px system-ui, sans-serif";
-        ctx.fillStyle = r.inZone ? (r.side === "BULL" ? "#059669" : "#DC2626") : "#64748B";
-        const tagLabel = gameMode === "versus"
-          ? `${r.name} [${r.side}]`
-          : `${r.name} [${r.side} ${r.multiplier.toFixed(1)}x]`;
-        ctx.fillText(tagLabel, -32, -18);
+        if (r.overheated) {
+          ctx.fillStyle = "#EF4444";
+          ctx.fillText("🔥 STALLED!", 0, -33);
+        } else {
+          ctx.fillStyle = r.inZone ? (r.side === "BULL" ? "#059669" : "#DC2626") : "#64748B";
+          const tagLabel = gameMode === "versus"
+            ? `${r.name} [${r.side}]`
+            : `${r.name} [${r.multiplier.toFixed(1)}x]`;
+          ctx.fillText(tagLabel, 0, -33);
+        }
 
         ctx.restore();
       };
@@ -615,11 +832,13 @@ export function RocketClashGame() {
     return () => cancelAnimationFrame(animFrameId.current);
   }, [gameState, gameMode, selectedAsset, selectedDuration]);
 
-  // Touch & Pointer handlers
+  // Pointer Handlers with Overheat Check
   const handleP1PointerDown = (e: React.PointerEvent) => {
     if (gameState !== "playing") return;
+    const p1 = p1Ref.current;
+    if (p1.overheated) return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    p1Ref.current.thrusting = true;
+    p1.thrusting = true;
     soundEngine.startThrust(true);
   };
 
@@ -630,8 +849,10 @@ export function RocketClashGame() {
 
   const handleP2PointerDown = (e: React.PointerEvent) => {
     if (gameState !== "playing" || gameMode !== "versus") return;
+    const p2 = p2Ref.current;
+    if (p2.overheated) return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    p2Ref.current.thrusting = true;
+    p2.thrusting = true;
     soundEngine.startThrust(false);
   };
 
@@ -645,15 +866,12 @@ export function RocketClashGame() {
   const isDeltaPositive = livePriceDelta >= 0;
   const roundProgressPercent = Math.max(0, Math.min(100, ((selectedDuration - timeLeft) / selectedDuration) * 100));
 
-  // 1v1 P2P Pot Economics (Strict Escrow Parity)
+  // P2P and Vault Economics
   const totalEscrowPot = (stakeMon * 2).toFixed(3);
-  const protocolFee = (stakeMon * 2 * 0.025).toFixed(4);
   const p2pWinnerPayout = ((stakeMon * 2) * 0.975).toFixed(3);
-
-  // Solo House Economics (Vault-backed Multiplier)
   const soloMultiplierPayout = (stakeMon * p1Telemetry.mult).toFixed(3);
 
-  // Render SVG mini price sparkline with Strike line
+  // Sparkline SVG
   const sparklineSVG = useMemo(() => {
     if (!history || history.length === 0) return null;
     const prices = history.map((p) => p.price);
@@ -700,7 +918,6 @@ export function RocketClashGame() {
           </linearGradient>
         </defs>
 
-        {/* Strike price baseline */}
         <line
           x1="0"
           y1={strikeY}
@@ -771,7 +988,7 @@ export function RocketClashGame() {
         </div>
       </header>
 
-      {/* 2. MODE-AWARE ECONOMIC BANNER */}
+      {/* 2. MODE & HAZARD ALERT BANNER */}
       <div className={`w-full px-4 py-2 rounded-2xl mb-3 border text-center transition-all ${
         isFinalTenSeconds
           ? "bg-amber-50 border-amber-300 text-amber-900 shadow-md animate-pulse"
@@ -783,19 +1000,13 @@ export function RocketClashGame() {
               <AlertTriangle className="w-4 h-4 text-amber-600" />
               <span>FINAL 10s VOLATILITY: PYTH ORACLE SETTLES WINNER AT 00:00!</span>
             </>
-          ) : gameMode === "versus" ? (
+          ) : (
             <>
-              <Scale className="w-3.5 h-3.5 text-[#6E4EF4]" />
               <span className="text-emerald-700 font-bold">P1 = BULL (UP)</span>
               <span className="text-slate-300">•</span>
               <span className="text-red-600 font-bold">P2 = BEAR (DOWN)</span>
               <span className="text-slate-300">•</span>
-              <span className="text-slate-800 font-medium">Winner takes exact <strong>{p2pWinnerPayout} MON</strong> pot (Fair Escrow)</span>
-            </>
-          ) : (
-            <>
-              <Coins className="w-3.5 h-3.5 text-amber-600" />
-              <span>SOLO VS HOUSE VAULT: Hold thruster in your zone to pump <strong>1x to 5x payout multiplier</strong>!</span>
+              <span className="text-amber-700 font-medium">⚠️ Avoid flying hazards (📜 🕯️ ⛽) & don't overheat on the ceiling!</span>
             </>
           )}
         </div>
@@ -890,15 +1101,18 @@ export function RocketClashGame() {
           {/* Player 1 HUD Card */}
           <div
             className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
-              p1Telemetry.inZone
+              p1Telemetry.overheated
+                ? "bg-red-50/95 border-red-400 text-red-900 animate-pulse"
+                : p1Telemetry.inZone
                 ? "bg-white/95 border-emerald-400 text-slate-900 shadow-emerald-500/15"
                 : "bg-white/85 border-black/[0.06] text-slate-800"
             }`}
           >
             <span className="text-xl">🟣</span>
             <div>
-              <div className="text-[10px] font-bold text-[#6E4EF4] leading-none uppercase">
+              <div className="text-[10px] font-bold text-[#6E4EF4] leading-none uppercase flex items-center gap-1">
                 P1 • {p1Ref.current.side}
+                {p1Telemetry.overheated && <span className="text-red-500 font-bold">STALLED</span>}
               </div>
               <div className="text-xs sm:text-sm font-bold font-mono text-slate-900 flex items-center gap-1.5">
                 {gameMode === "versus" ? (
@@ -912,11 +1126,13 @@ export function RocketClashGame() {
                   </>
                 )}
               </div>
-              {/* Mastery bar */}
-              <div className="w-16 h-1 bg-slate-200 rounded-full mt-1 overflow-hidden">
+              {/* Heat bar */}
+              <div className="w-16 h-1.5 bg-slate-200 rounded-full mt-1 overflow-hidden">
                 <div
-                  className="h-full bg-[#836EF9] transition-all"
-                  style={{ width: `${p1Telemetry.chargePercent}%` }}
+                  className={`h-full transition-all ${
+                    p1Telemetry.heat > 75 ? "bg-red-500" : p1Telemetry.heat > 50 ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${p1Telemetry.heat}%` }}
                 />
               </div>
             </div>
@@ -944,13 +1160,16 @@ export function RocketClashGame() {
           {/* Player 2 / Opponent HUD Card */}
           <div
             className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
-              p2Telemetry.inZone
+              p2Telemetry.overheated
+                ? "bg-red-50/95 border-red-400 text-red-900 animate-pulse"
+                : p2Telemetry.inZone
                 ? "bg-white/95 border-emerald-400 text-slate-900 shadow-emerald-500/15"
                 : "bg-white/85 border-black/[0.06] text-slate-800"
             }`}
           >
             <div>
-              <div className="text-[10px] font-bold text-emerald-600 uppercase text-right leading-none">
+              <div className="text-[10px] font-bold text-emerald-600 uppercase text-right leading-none flex items-center justify-end gap-1">
+                {p2Telemetry.overheated && <span className="text-red-500 font-bold">STALLED</span>}
                 {gameMode === "solo" ? "HOUSE VAULT" : "P2 • " + p2Ref.current.side}
               </div>
               <div className="text-xs sm:text-sm font-bold font-mono text-slate-900 flex items-center gap-1.5 justify-end">
@@ -962,11 +1181,13 @@ export function RocketClashGame() {
                   </span>
                 )}
               </div>
-              {/* Mastery bar */}
-              <div className="w-16 h-1 bg-slate-200 rounded-full mt-1 overflow-hidden ml-auto">
+              {/* Heat bar */}
+              <div className="w-16 h-1.5 bg-slate-200 rounded-full mt-1 overflow-hidden ml-auto">
                 <div
-                  className="h-full bg-emerald-500 transition-all"
-                  style={{ width: `${p2Telemetry.chargePercent}%` }}
+                  className={`h-full transition-all ${
+                    p2Telemetry.heat > 75 ? "bg-red-500" : p2Telemetry.heat > 50 ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${p2Telemetry.heat}%` }}
                 />
               </div>
             </div>
@@ -983,10 +1204,8 @@ export function RocketClashGame() {
             <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mb-1">
               Rocket Clash Arena
             </h2>
-            <p className="text-xs sm:text-sm text-slate-500 max-w-md mb-4 leading-relaxed">
-              {gameMode === "versus"
-                ? "1v1 Escrow Battle: P1 is Bull, P2 is Bear. At 00:00, whoever holds the winning side takes the entire 0.488 MON pot!"
-                : "Solo Arcade: Predict Bull or Bear against the House Vault. Hold thrusters in your territory to multiply your payout up to 5.0x!"}
+            <p className="text-xs sm:text-sm text-slate-500 max-w-md mb-3 leading-relaxed">
+              Dodge crypto hazards (📜 🕯️ ⛽), avoid ceiling engine stalls, and hold thrusters in your territory. At 00:00, Pyth Oracle settles the winning side!
             </p>
 
             {/* Mode & Settings Row */}
@@ -1149,43 +1368,61 @@ export function RocketClashGame() {
           onPointerUp={handleP1PointerUp}
           onPointerLeave={handleP1PointerUp}
           onPointerCancel={handleP1PointerUp}
-          className="relative group p-4 rounded-2xl bg-white border border-black/[0.06] hover:border-black/[0.12] active:scale-[0.98] transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none"
+          className={`relative group p-4 rounded-2xl bg-white border transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none ${
+            p1Telemetry.overheated
+              ? "border-red-400 bg-red-50/50"
+              : "border-black/[0.06] hover:border-black/[0.12] active:scale-[0.98]"
+          }`}
         >
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#836EF9]/15 flex items-center justify-center text-xl">
-              🟣
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${
+              p1Telemetry.overheated ? "bg-red-500/20" : "bg-[#836EF9]/15"
+            }`}>
+              {p1Telemetry.overheated ? "🔥" : "🟣"}
             </div>
             <div className="text-left">
-              <div className="text-xs font-semibold text-[#6E4EF4]">
-                P1 ({p1Ref.current.side}) • Hold Thrusters to Fly
+              <div className="text-xs font-semibold text-[#6E4EF4] flex items-center gap-1.5">
+                <span>P1 ({p1Ref.current.side}) • Hold Thrusters</span>
+                {p1Telemetry.overheated && <span className="text-red-500 text-[10px] font-bold">STALLED (COOLING)</span>}
               </div>
-              <div className="text-xs font-mono text-slate-500">HOLD [SPACE] / [W] / TAP</div>
+              <div className="text-xs font-mono text-slate-500">HOLD [SPACE] / [W] / TAP • Heat: {p1Telemetry.heat}%</div>
             </div>
           </div>
-          <Flame className="w-5 h-5 text-amber-500 group-active:scale-125 transition-transform" />
+          <Flame className={`w-5 h-5 transition-transform ${
+            p1Telemetry.overheated ? "text-red-500" : "text-amber-500 group-active:scale-125"
+          }`} />
         </button>
 
-        {/* P2 Controls Button (Versus mode or House in Solo) */}
+        {/* P2 Controls Button */}
         {gameMode === "versus" ? (
           <button
             onPointerDown={handleP2PointerDown}
             onPointerUp={handleP2PointerUp}
             onPointerLeave={handleP2PointerUp}
             onPointerCancel={handleP2PointerUp}
-            className="relative group p-4 rounded-2xl bg-white border border-black/[0.06] hover:border-black/[0.12] active:scale-[0.98] transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none"
+            className={`relative group p-4 rounded-2xl bg-white border transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none ${
+              p2Telemetry.overheated
+                ? "border-red-400 bg-red-50/50"
+                : "border-black/[0.06] hover:border-black/[0.12] active:scale-[0.98]"
+            }`}
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center text-xl">
-                🐸
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl ${
+                p2Telemetry.overheated ? "bg-red-500/20" : "bg-emerald-500/15"
+              }`}>
+                {p2Telemetry.overheated ? "🔥" : "🐸"}
               </div>
               <div className="text-left">
-                <div className="text-xs font-semibold text-emerald-700">
-                  P2 ({p2Ref.current.side}) • Hold Thrusters to Fly
+                <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
+                  <span>P2 ({p2Ref.current.side}) • Hold Thrusters</span>
+                  {p2Telemetry.overheated && <span className="text-red-500 text-[10px] font-bold">STALLED (COOLING)</span>}
                 </div>
-                <div className="text-xs font-mono text-slate-500">HOLD [ARROW UP] / TAP</div>
+                <div className="text-xs font-mono text-slate-500">HOLD [ARROW UP] / TAP • Heat: {p2Telemetry.heat}%</div>
               </div>
             </div>
-            <Flame className="w-5 h-5 text-emerald-600 group-active:scale-125 transition-transform" />
+            <Flame className={`w-5 h-5 transition-transform ${
+              p2Telemetry.overheated ? "text-red-500" : "text-emerald-600 group-active:scale-125"
+            }`} />
           </button>
         ) : (
           <div className="p-4 rounded-2xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
@@ -1205,35 +1442,35 @@ export function RocketClashGame() {
         )}
       </div>
 
-      {/* 6. Apple Design Financial Architecture Cards */}
+      {/* 6. Gameplay Mechanics Info Cards */}
       <div className="w-full mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            Zero-Deficit Escrow (1v1)
+            <Gauge className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            Engine Heat Management
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            In P2P duels, the winner takes the exact locked pot (0.488 MON net). Neither player can ever lose more than their deposited stake.
+            Holding thrusters continuously builds engine heat. If you hit 100%, the rocket stalls and drops into free fall!
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Coins className="w-3.5 h-3.5 text-amber-600" />
-            Vault-Backed Multipliers (Solo)
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+            Anti-Camping Ionosphere
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            In Solo mode, holding your rocket in the target zone charges up to 5x leverage backed directly by the Protocol Liquidity Vault.
+            Riding the top ceiling triggers atmospheric friction: the rocket bounces down and heat spikes dangerously.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Scale className="w-3.5 h-3.5 text-emerald-600" />
-            Oracle Determinism & Draw Policy
+            <Skull className="w-3.5 h-3.5 text-red-500" />
+            Crypto Hazard Obstacles
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            At 00:00, Pyth price feed determines the winning direction. Any exact price tie refunds 100% of stakes with zero fees.
+            Dodge incoming Red Wicks (🕯️), SEC Subpoenas (📜), and MEV Snipers (⚡) that spin your rocket and drop your altitude.
           </p>
         </div>
       </div>
