@@ -147,6 +147,27 @@ class SoundEngine {
       osc.stop(startTime + 0.3);
     });
   }
+
+  public playCountdownTick(isFinalFive: boolean): void {
+    if (this.isMuted) return;
+    const ctx = this.initCtx();
+    if (!ctx) return;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(isFinalFive ? 950 : 680, ctx.currentTime);
+
+    gain.gain.setValueAtTime(isFinalFive ? 0.08 : 0.04, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.06);
+  }
 }
 
 export const soundEngine = new SoundEngine();

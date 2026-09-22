@@ -17,6 +17,9 @@ import {
   Radio,
   Clock,
   Coins,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
@@ -27,15 +30,14 @@ interface RocketState {
   vy: number;
   tilt: number;
   thrusting: boolean;
-  score: number;
   multiplier: number;
-  inCorridor: boolean;
-  liquidated: boolean;
+  chargeTime: number; // Seconds spent in valid zone
+  inZone: boolean;
   name: string;
   avatar: string;
   color: string;
   flameColor: string;
-  prediction: "BULL" | "BEAR";
+  side: "BULL" | "BEAR";
 }
 
 interface Particle {
@@ -57,14 +59,6 @@ interface Cloud {
   opacity: number;
 }
 
-interface FloatingMeme {
-  text: string;
-  x: number;
-  y: number;
-  speed: number;
-  color: string;
-}
-
 type MatchDuration = 15 | 30 | 60;
 
 export function RocketClashGame() {
@@ -73,22 +67,24 @@ export function RocketClashGame() {
   // Asset selection & Price Stream
   const [selectedAsset, setSelectedAsset] = useState<SupportedAsset>("MON");
   const priceState = usePriceStream(selectedAsset);
-  const { currentPrice, changePercent, history, isLive, source } = priceState;
+  const { currentPrice, history, isLive, source } = priceState;
 
   // Game configuration & round state
   const [gameMode, setGameMode] = useState<"solo" | "versus">("solo");
   const [selectedDuration, setSelectedDuration] = useState<MatchDuration>(30);
-  const [p1Prediction, setP1Prediction] = useState<"BULL" | "BEAR">("BULL");
+  const [playerStance, setPlayerStance] = useState<"BULL" | "BEAR">("BULL");
   const [stakeMon, setStakeMon] = useState<number>(0.25);
   const [gameState, setGameState] = useState<"idle" | "playing" | "gameover">("idle");
   const [timeLeft, setTimeLeft] = useState<number>(30);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [winner, setWinner] = useState<"P1" | "P2" | "DRAW" | null>(null);
+  const [winner, setWinner] = useState<"P1" | "P2" | "HOUSE" | null>(null);
+  const [winningSide, setWinningSide] = useState<"BULL" | "BEAR" | null>(null);
 
   // Strike price locked at start of round
   const [strikePrice, setStrikePrice] = useState<number>(currentPrice);
   const strikePriceRef = useRef<number>(currentPrice);
   const currentPriceRef = useRef<number>(currentPrice);
+
   useEffect(() => {
     currentPriceRef.current = currentPrice;
     if (gameState === "idle") {
@@ -98,63 +94,45 @@ export function RocketClashGame() {
   }, [currentPrice, gameState]);
 
   // Live HUD telemetry
-  const [p1Telemetry, setP1Telemetry] = useState({ score: 0, mult: 1.0, inZone: false });
-  const [p2Telemetry, setP2Telemetry] = useState({ score: 0, mult: 1.0, inZone: false });
+  const [p1Telemetry, setP1Telemetry] = useState({ mult: 1.0, inZone: false, chargePercent: 0 });
+  const [p2Telemetry, setP2Telemetry] = useState({ mult: 1.0, inZone: false, chargePercent: 0 });
 
   // Physics & Animation references
   const animFrameId = useRef<number>(0);
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Corridor physics reference
-  const corridorRef = useRef({
-    topY: 140,
-    bottomY: 260,
-    targetY: 200,
-    currentCenterY: 200,
-    phase: 0,
-    speed: 0.025,
-  });
-
   const p1Ref = useRef<RocketState>({
-    y: 200,
+    y: 130, // Starts in upper half (Bull territory)
     vy: 0,
     tilt: 0,
     thrusting: false,
-    score: 0,
     multiplier: 1.0,
-    inCorridor: true,
-    liquidated: false,
+    chargeTime: 0,
+    inZone: true,
     name: "Gmonad Alpha",
     avatar: "🟣",
     color: "#836EF9",
     flameColor: "#FF6B00",
-    prediction: "BULL",
+    side: "BULL",
   });
 
   const p2Ref = useRef<RocketState>({
-    y: 200,
+    y: 310, // Starts in lower half (Bear territory)
     vy: 0,
     tilt: 0,
     thrusting: false,
-    score: 0,
     multiplier: 1.0,
-    inCorridor: true,
-    liquidated: false,
+    chargeTime: 0,
+    inZone: true,
     name: "Pepe Rocket",
     avatar: "🐸",
     color: "#10B981",
     flameColor: "#059669",
-    prediction: "BEAR",
+    side: "BEAR",
   });
 
   const particlesRef = useRef<Particle[]>([]);
   const cloudsRef = useRef<Cloud[]>([]);
-  const memesRef = useRef<FloatingMeme[]>([
-    { text: "⚡ MONAD 10k TPS", x: 750, y: 70, speed: 0.9, color: "#6E4EF4" },
-    { text: "PYTH ORACLE TICK", x: 1000, y: 110, speed: 1.1, color: "#059669" },
-    { text: "SUB-SECOND FINALITY", x: 1280, y: 60, speed: 0.85, color: "#D97706" },
-    { text: "WAGMI MON", x: 1550, y: 130, speed: 1.0, color: "#2563EB" },
-  ]);
 
   // Audio toggle
   const toggleSound = () => {
@@ -163,17 +141,17 @@ export function RocketClashGame() {
     soundEngine.setMuted(next);
   };
 
-  // Generate gentle ambient clouds for daylight Apple sky
+  // Generate clouds for light mode canvas
   useEffect(() => {
     const clouds: Cloud[] = [];
     for (let i = 0; i < 6; i++) {
       clouds.push({
-        x: (i * 150) + Math.random() * 40,
-        y: 40 + Math.random() * 180,
-        width: 90 + Math.random() * 60,
-        height: 28 + Math.random() * 16,
-        speed: 0.25 + Math.random() * 0.35,
-        opacity: 0.45 + Math.random() * 0.35,
+        x: i * 150 + Math.random() * 40,
+        y: 30 + Math.random() * 160,
+        width: 85 + Math.random() * 50,
+        height: 26 + Math.random() * 14,
+        speed: 0.25 + Math.random() * 0.3,
+        opacity: 0.4 + Math.random() * 0.3,
       });
     }
     cloudsRef.current = clouds;
@@ -219,6 +197,7 @@ export function RocketClashGame() {
   // Start round
   const startGame = useCallback(() => {
     setWinner(null);
+    setWinningSide(null);
     setTimeLeft(selectedDuration);
     setGameState("playing");
 
@@ -227,28 +206,30 @@ export function RocketClashGame() {
     setStrikePrice(lockedPrice);
     strikePriceRef.current = lockedPrice;
 
+    // Determine sides based on mode
+    const p1Side = gameMode === "solo" ? playerStance : "BULL";
+    const p2Side = p1Side === "BULL" ? "BEAR" : "BULL";
+
     p1Ref.current = {
       ...p1Ref.current,
-      y: 200,
+      y: p1Side === "BULL" ? 130 : 310,
       vy: 0,
       tilt: 0,
       thrusting: false,
-      score: 0,
       multiplier: 1.0,
-      liquidated: false,
-      prediction: p1Prediction,
+      chargeTime: 0,
+      side: p1Side,
     };
 
     p2Ref.current = {
       ...p2Ref.current,
-      y: 200,
+      y: p2Side === "BULL" ? 130 : 310,
       vy: 0,
       tilt: 0,
       thrusting: false,
-      score: 0,
       multiplier: 1.0,
-      liquidated: false,
-      prediction: p1Prediction === "BULL" ? "BEAR" : "BULL",
+      chargeTime: 0,
+      side: p2Side,
     };
 
     particlesRef.current = [];
@@ -260,34 +241,41 @@ export function RocketClashGame() {
       seconds--;
       setTimeLeft(seconds);
 
+      // Tension tick sound in the final 10 seconds of crypto volatility
+      if (seconds <= 10 && seconds > 0) {
+        soundEngine.playCountdownTick(seconds <= 5);
+      }
+
       if (seconds <= 0) {
         clearInterval(roundTimerRef.current!);
         setGameState("gameover");
         soundEngine.stopThrust();
         soundEngine.playVictoryJingle();
 
-        // Check price direction outcome
+        // ORACLE VICTORY EVALUATION AT T=0
         const finalPrice = currentPriceRef.current;
         const initial = strikePriceRef.current;
-        const isBullOutcome = finalPrice >= initial;
+        const outcomeSide: "BULL" | "BEAR" = finalPrice >= initial ? "BULL" : "BEAR";
+        setWinningSide(outcomeSide);
 
-        // Apply prediction bonus (1.5x) if matched
-        let s1 = p1Ref.current.score * p1Ref.current.multiplier;
-        if ((p1Ref.current.prediction === "BULL" && isBullOutcome) || (p1Ref.current.prediction === "BEAR" && !isBullOutcome)) {
-          s1 *= 1.5;
+        if (gameMode === "solo") {
+          // Solo: Player vs House
+          if (p1Ref.current.side === outcomeSide) {
+            setWinner("P1");
+          } else {
+            setWinner("HOUSE");
+          }
+        } else {
+          // Versus: P1 (Bull) vs P2 (Bear)
+          if (p1Ref.current.side === outcomeSide) {
+            setWinner("P1");
+          } else {
+            setWinner("P2");
+          }
         }
-
-        let s2 = p2Ref.current.score * p2Ref.current.multiplier;
-        if ((p2Ref.current.prediction === "BULL" && isBullOutcome) || (p2Ref.current.prediction === "BEAR" && !isBullOutcome)) {
-          s2 *= 1.5;
-        }
-
-        if (s1 > s2) setWinner("P1");
-        else if (s2 > s1) setWinner("P2");
-        else setWinner("DRAW");
       }
     }, 1000);
-  }, [selectedDuration, p1Prediction]);
+  }, [selectedDuration, gameMode, playerStance]);
 
   // Main 60fps Canvas Loop (Apple Light Mode)
   useEffect(() => {
@@ -304,34 +292,18 @@ export function RocketClashGame() {
 
       const width = canvas.width;
       const height = canvas.height;
+      const strikeCenterY = height * 0.5;
 
-      // 1. UPDATE PHYSICS & LOGIC
+      // 1. UPDATE PHYSICS & MULTIPLIER CHARGE
       if (gameState === "playing") {
-        // Correlate corridor altitude with real-time price delta!
-        const currP = currentPriceRef.current;
-        const strikeP = strikePriceRef.current;
-        const priceDeltaPercent = strikeP > 0 ? ((currP - strikeP) / strikeP) * 100 : 0;
-
-        // Upward price moves corridor UP (-y in canvas), downward price moves corridor DOWN (+y)
-        const priceVerticalOffset = Math.max(-90, Math.min(90, priceDeltaPercent * 110));
-
-        const corr = corridorRef.current;
-        corr.phase += corr.speed;
-        const baselineCenter = height * 0.5 - priceVerticalOffset;
-        const targetCenter = baselineCenter + Math.sin(corr.phase) * 18;
-
-        // Smooth critically damped approach to target
-        corr.currentCenterY += (targetCenter - corr.currentCenterY) * 0.08;
-
-        const corridorHeight = 115;
-        corr.topY = corr.currentCenterY - corridorHeight / 2;
-        corr.bottomY = corr.currentCenterY + corridorHeight / 2;
-
-        // Bot AI behavior in Solo mode
+        // Solo Mode AI behavior: tries to stay in its target zone
         if (gameMode === "solo") {
           const p2 = p2Ref.current;
-          const desiredY = corr.currentCenterY + Math.sin(time * 0.0025) * 12;
-          const distance = p2.y - desiredY;
+          // Target altitude: center of its respective zone
+          const targetY = p2.side === "BULL" ? height * 0.25 : height * 0.75;
+          const targetJitter = targetY + Math.sin(time * 0.003) * 20;
+          const distance = p2.y - targetJitter;
+
           if (distance > 6 && p2.vy > -1.2) {
             p2.thrusting = true;
           } else if (distance < -6 && p2.vy < 1.0) {
@@ -341,14 +313,12 @@ export function RocketClashGame() {
 
         // Update Rockets
         [p1Ref.current, p2Ref.current].forEach((r, idx) => {
-          if (r.liquidated) return;
-
           const gravity = 0.36;
           const thrust = -0.78;
 
           if (r.thrusting) {
             r.vy += thrust;
-            // Spawn clean exhaust puffs
+            // Exhaust particles
             for (let i = 0; i < 2; i++) {
               particlesRef.current.push({
                 x: idx === 0 ? width * 0.28 : width * 0.44,
@@ -366,10 +336,10 @@ export function RocketClashGame() {
           r.vy *= 0.965; // Air drag
           r.y += r.vy;
 
-          // Realistic aerodynamic tilt
+          // Aerodynamic tilt
           r.tilt = Math.max(-22, Math.min(26, r.vy * 3.0));
 
-          // Boundaries
+          // Physical boundaries
           if (r.y < 28) {
             r.y = 28;
             r.vy = 1;
@@ -381,15 +351,18 @@ export function RocketClashGame() {
             soundEngine.playLiquidationWarning();
           }
 
-          // In-Corridor scoring
-          if (r.y >= corr.topY && r.y <= corr.bottomY) {
-            r.inCorridor = true;
-            r.score += 1.6;
-            r.multiplier = Math.min(5.0, r.multiplier + 0.005);
-            if (Math.random() < 0.07) soundEngine.playScorePing();
-          } else {
-            r.inCorridor = false;
-            r.multiplier = Math.max(1.0, r.multiplier - 0.007);
+          // Check Zone Position:
+          // Bull Zone: y < strikeCenterY (Upper half)
+          // Bear Zone: y >= strikeCenterY (Lower half)
+          const inValidZone = r.side === "BULL" ? r.y < strikeCenterY : r.y >= strikeCenterY;
+          r.inZone = inValidZone;
+
+          if (inValidZone) {
+            r.chargeTime += dt;
+            // Multiplier climbs from 1.0x to 5.0x based on time spent in target zone
+            const maxSecondsFor5x = selectedDuration * 0.75;
+            r.multiplier = Math.min(5.0, 1.0 + (r.chargeTime / maxSecondsFor5x) * 4.0);
+            if (Math.random() < 0.05) soundEngine.playScorePing();
           }
         });
 
@@ -402,22 +375,17 @@ export function RocketClashGame() {
         });
         particlesRef.current = particlesRef.current.filter((p) => p.alpha > 0);
 
-        // Update meme banners
-        memesRef.current.forEach((m) => {
-          m.x -= m.speed;
-          if (m.x < -200) m.x = width + 60;
-        });
-
         // Update HUD telemetry
+        const maxSec = selectedDuration * 0.75;
         setP1Telemetry({
-          score: Math.floor(p1Ref.current.score),
           mult: Number(p1Ref.current.multiplier.toFixed(2)),
-          inZone: p1Ref.current.inCorridor,
+          inZone: p1Ref.current.inZone,
+          chargePercent: Math.min(100, Math.floor((p1Ref.current.chargeTime / maxSec) * 100)),
         });
         setP2Telemetry({
-          score: Math.floor(p2Ref.current.score),
           mult: Number(p2Ref.current.multiplier.toFixed(2)),
-          inZone: p2Ref.current.inCorridor,
+          inZone: p2Ref.current.inZone,
+          chargePercent: Math.min(100, Math.floor((p2Ref.current.chargeTime / maxSec) * 100)),
         });
       }
 
@@ -432,7 +400,7 @@ export function RocketClashGame() {
       // Soft Daylight Sky Gradient
       const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
       skyGrad.addColorStop(0, "#F4F6F9");
-      skyGrad.addColorStop(0.65, "#EDF2F7");
+      skyGrad.addColorStop(0.5, "#EDF2F7");
       skyGrad.addColorStop(1, "#E2E8F0");
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, width, height);
@@ -451,120 +419,79 @@ export function RocketClashGame() {
       cloudsRef.current.forEach((c) => {
         ctx.fillStyle = `rgba(255, 255, 255, ${c.opacity})`;
         ctx.beginPath();
-        // Pill cloud shape
         const r = c.height / 2;
         ctx.arc(c.x + r, c.y + r, r, Math.PI / 2, (Math.PI * 3) / 2);
         ctx.arc(c.x + c.width - r, c.y + r, r, (Math.PI * 3) / 2, Math.PI / 2);
         ctx.closePath();
         ctx.fill();
-
-        ctx.strokeStyle = `rgba(0, 0, 0, 0.03)`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
       });
 
-      // Monad Purple Daylight Sun / Hot Air Balloon
-      const balloonX = width - 90;
-      const balloonY = 70;
-      ctx.fillStyle = "#836EF9";
-      ctx.beginPath();
-      ctx.arc(balloonX, balloonY, 26, 0, Math.PI * 2);
-      ctx.fill();
+      // Current Price vs Strike Delta
+      const currP = currentPriceRef.current;
+      const strikeP = strikePriceRef.current;
+      const isPriceBullish = currP >= strikeP;
+      const deltaPercent = strikeP > 0 ? (((currP - strikeP) / strikeP) * 100).toFixed(2) : "0.00";
 
-      ctx.font = "16px sans-serif";
-      ctx.fillText("🟣", balloonX - 8, balloonY + 6);
-      ctx.font = "600 8px system-ui, sans-serif";
-      ctx.fillStyle = "#6E4EF4";
-      ctx.fillText("MONAD LABS", balloonX - 22, balloonY + 38);
+      // UPPER HALF: BULL TERRITORY (Green tint if leading)
+      if (isPriceBullish) {
+        ctx.fillStyle = "rgba(20, 207, 28, 0.06)";
+        ctx.fillRect(0, 0, width, strikeCenterY);
+      }
 
-      // Distant Minimalist Skyline Candlesticks (Apple-restrained financial silhouette)
-      const candles = [60, 95, 75, 120, 85, 105, 135];
-      candles.forEach((ch, i) => {
-        const cx = 90 + i * 105;
-        const cy = height - ch;
-        // Subtle wick
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(cx + 10, cy - 12);
-        ctx.lineTo(cx + 10, height);
-        ctx.stroke();
+      // LOWER HALF: BEAR TERRITORY (Red tint if leading)
+      if (!isPriceBullish) {
+        ctx.fillStyle = "rgba(255, 59, 48, 0.06)";
+        ctx.fillRect(0, strikeCenterY, width, height - strikeCenterY);
+      }
 
-        // Soft clean body
-        ctx.fillStyle = i % 2 === 0 ? "rgba(20, 207, 28, 0.1)" : "rgba(255, 59, 48, 0.08)";
-        ctx.strokeStyle = i % 2 === 0 ? "rgba(20, 207, 28, 0.3)" : "rgba(255, 59, 48, 0.25)";
-        ctx.lineWidth = 1;
-        ctx.fillRect(cx, cy, 20, ch);
-        ctx.strokeRect(cx, cy, 20, ch);
-      });
+      // UPPER ZONE WATERMARK & LABEL
+      ctx.font = "bold 11px system-ui, sans-serif";
+      ctx.fillStyle = isPriceBullish ? "#059669" : "#94A3B8";
+      ctx.fillText("▲ BULL ZONE (Wins if Price >= Strike)", 18, 28);
+      if (isPriceBullish) {
+        ctx.font = "bold 10px monospace";
+        ctx.fillStyle = "#059669";
+        ctx.fillText(`⚡ CURRENTLY LEADING (+${deltaPercent}%)`, width - 210, 28);
+      }
 
-      // Floating Crypto Meme Stream
-      memesRef.current.forEach((m) => {
-        ctx.font = "600 10px system-ui, sans-serif";
-        ctx.fillStyle = m.color;
-        ctx.fillText(m.text, m.x, m.y);
-      });
+      // LOWER ZONE WATERMARK & LABEL
+      ctx.font = "bold 11px system-ui, sans-serif";
+      ctx.fillStyle = !isPriceBullish ? "#DC2626" : "#94A3B8";
+      ctx.fillText("▼ BEAR ZONE (Wins if Price < Strike)", 18, height - 16);
+      if (!isPriceBullish) {
+        ctx.font = "bold 10px monospace";
+        ctx.fillStyle = "#DC2626";
+        ctx.fillText(`⚡ CURRENTLY LEADING (${deltaPercent}%)`, width - 210, height - 16);
+      }
 
-      // Strike Price Reference Horizon (Dotted line)
-      const strikeCenterY = height * 0.5;
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.14)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
+      // HORIZONTAL STRIKE PRICE BARRIER (The Critical Dividing Line)
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
       ctx.beginPath();
       ctx.moveTo(0, strikeCenterY);
       ctx.lineTo(width, strikeCenterY);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.font = "500 9px system-ui, sans-serif";
-      ctx.fillStyle = "#858585";
-      ctx.fillText(`STRIKE BASELINE: $${strikePriceRef.current.toFixed(selectedAsset === "BTC" ? 1 : 2)}`, 16, strikeCenterY - 6);
-
-      // Render Dynamic Price Corridor (Apple clean green ribbon)
-      const corr = corridorRef.current;
-      const currP = currentPriceRef.current;
-      const strikeP = strikePriceRef.current;
-      const isAboveStrike = currP >= strikeP;
-
-      const corridorGrad = ctx.createLinearGradient(0, corr.topY, 0, corr.bottomY);
-      if (isAboveStrike) {
-        corridorGrad.addColorStop(0, "rgba(20, 207, 28, 0.02)");
-        corridorGrad.addColorStop(0.5, "rgba(20, 207, 28, 0.12)");
-        corridorGrad.addColorStop(1, "rgba(20, 207, 28, 0.02)");
-      } else {
-        corridorGrad.addColorStop(0, "rgba(255, 59, 48, 0.02)");
-        corridorGrad.addColorStop(0.5, "rgba(255, 59, 48, 0.10)");
-        corridorGrad.addColorStop(1, "rgba(255, 59, 48, 0.02)");
-      }
-
-      ctx.fillStyle = corridorGrad;
-      ctx.fillRect(0, corr.topY, width, corr.bottomY - corr.topY);
-
-      // Corridor Borders
-      ctx.strokeStyle = isAboveStrike ? "rgba(20, 207, 28, 0.75)" : "rgba(255, 59, 48, 0.7)";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
-
+      // Strike Price Badge in the Center
+      ctx.fillStyle = "#FFFFFF";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(0, corr.topY);
-      ctx.lineTo(width, corr.topY);
+      ctx.roundRect(width * 0.5 - 90, strikeCenterY - 12, 180, 24, 6);
+      ctx.fill();
       ctx.stroke();
 
-      ctx.beginPath();
-      ctx.moveTo(0, corr.bottomY);
-      ctx.lineTo(width, corr.bottomY);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Corridor Label
-      ctx.font = "600 10px system-ui, sans-serif";
-      ctx.fillStyle = isAboveStrike ? "#059669" : "#DC2626";
-      const deltaPercent = strikeP > 0 ? (((currP - strikeP) / strikeP) * 100).toFixed(2) : "0.00";
+      ctx.font = "bold 10px monospace";
+      ctx.fillStyle = "#1E293B";
+      ctx.textAlign = "center";
       ctx.fillText(
-        `⚡ ${selectedAsset} TARGET CORRIDOR (${Number(deltaPercent) >= 0 ? `+${deltaPercent}%` : `${deltaPercent}%`}) ⚡`,
-        width * 0.28,
-        corr.topY + 16
+        `STRIKE: $${strikePriceRef.current.toFixed(selectedAsset === "BTC" ? 1 : 2)}`,
+        width * 0.5,
+        strikeCenterY + 4
       );
+      ctx.textAlign = "start"; // Reset text alignment
 
       // Render Exhaust Particles
       particlesRef.current.forEach((p) => {
@@ -584,7 +511,6 @@ export function RocketClashGame() {
 
         // Thruster flame if firing
         if (r.thrusting) {
-          // Warm cartoon outer flame
           ctx.fillStyle = r.flameColor;
           ctx.beginPath();
           ctx.moveTo(-16, -4);
@@ -593,7 +519,6 @@ export function RocketClashGame() {
           ctx.closePath();
           ctx.fill();
 
-          // White hot core
           ctx.fillStyle = "#FFFFFF";
           ctx.beginPath();
           ctx.moveTo(-16, -2);
@@ -603,12 +528,12 @@ export function RocketClashGame() {
           ctx.fill();
         }
 
-        // In-zone highlight aura
-        if (r.inCorridor) {
-          ctx.strokeStyle = "rgba(20, 207, 28, 0.4)";
-          ctx.lineWidth = 3;
+        // Active Zone multiplier aura
+        if (r.inZone) {
+          ctx.strokeStyle = r.side === "BULL" ? "rgba(20, 207, 28, 0.6)" : "rgba(239, 68, 68, 0.6)";
+          ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.ellipse(0, 0, 23, 14, 0, 0, Math.PI * 2);
+          ctx.ellipse(0, 0, 24, 15, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
@@ -647,7 +572,7 @@ export function RocketClashGame() {
         ctx.fill();
 
         // Cockpit Bubble & Avatar
-        ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
         ctx.beginPath();
         ctx.arc(2, 0, 7.5, 0, Math.PI * 2);
         ctx.fill();
@@ -658,9 +583,13 @@ export function RocketClashGame() {
         ctx.fillText(r.avatar, -3.5, 4);
 
         // Player Tag & Multiplier Badge
-        ctx.font = "600 9px system-ui, sans-serif";
-        ctx.fillStyle = r.inCorridor ? "#059669" : "#1E293B";
-        ctx.fillText(`${r.name} (${r.multiplier.toFixed(1)}x)`, -24, -18);
+        ctx.font = "bold 9px system-ui, sans-serif";
+        ctx.fillStyle = r.inZone ? (r.side === "BULL" ? "#059669" : "#DC2626") : "#64748B";
+        ctx.fillText(
+          `${r.name} [${r.side} ${r.multiplier.toFixed(1)}x]`,
+          -32,
+          -18
+        );
 
         ctx.restore();
       };
@@ -673,9 +602,9 @@ export function RocketClashGame() {
 
     animFrameId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameId.current);
-  }, [gameState, gameMode, selectedAsset]);
+  }, [gameState, gameMode, selectedAsset, selectedDuration]);
 
-  // Touch & Pointer handlers for zero latency direct manipulation
+  // Touch & Pointer handlers
   const handleP1PointerDown = (e: React.PointerEvent) => {
     if (gameState !== "playing") return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -700,12 +629,14 @@ export function RocketClashGame() {
     if (gameMode === "versus") soundEngine.stopThrust();
   };
 
-  const totalPot = (stakeMon * 2 * Math.max(p1Telemetry.mult, p2Telemetry.mult)).toFixed(3);
-  const roundProgressPercent = Math.max(0, Math.min(100, ((selectedDuration - timeLeft) / selectedDuration) * 100));
-
-  // Calculate live delta between current price and strike
+  const isFinalTenSeconds = timeLeft <= 10 && gameState === "playing";
   const livePriceDelta = strikePrice > 0 ? ((currentPrice - strikePrice) / strikePrice) * 100 : 0;
   const isDeltaPositive = livePriceDelta >= 0;
+  const roundProgressPercent = Math.max(0, Math.min(100, ((selectedDuration - timeLeft) / selectedDuration) * 100));
+
+  // Dynamic Payout estimation
+  const potentialP1Payout = (stakeMon * p1Telemetry.mult).toFixed(3);
+  const potentialP2Payout = (stakeMon * p2Telemetry.mult).toFixed(3);
 
   // Render SVG mini price sparkline with Strike line
   const sparklineSVG = useMemo(() => {
@@ -715,7 +646,7 @@ export function RocketClashGame() {
     const maxP = Math.max(...prices, strikePrice, currentPrice);
     const range = maxP - minP || 1;
     const w = 480;
-    const h = 80;
+    const h = 70;
     const padY = 8;
     const usableH = h - padY * 2;
 
@@ -746,7 +677,7 @@ export function RocketClashGame() {
     const strokeColor = isDeltaPositive ? "#14CF1C" : "#FF3B30";
 
     return (
-      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-16 overflow-visible" preserveAspectRatio="none">
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-14 overflow-visible" preserveAspectRatio="none">
         <defs>
           <linearGradient id="priceSparkGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={strokeColor} stopOpacity="0.16" />
@@ -754,25 +685,20 @@ export function RocketClashGame() {
           </linearGradient>
         </defs>
 
-        {/* Strike price reference horizontal line */}
+        {/* Strike price baseline */}
         <line
           x1="0"
           y1={strikeY}
           x2={w}
           y2={strikeY}
-          stroke="#858585"
+          stroke="#94A3B8"
           strokeDasharray="4 4"
           strokeWidth="1.2"
-          opacity="0.5"
         />
 
-        {/* Area fill */}
         <path d={`${pathD} L ${w} ${h} L 0 ${h} Z`} fill="url(#priceSparkGrad)" />
-
-        {/* Price path */}
         <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
 
-        {/* Current price endpoint */}
         <circle cx={lastP.x} cy={lastP.y} r="3.5" fill={strokeColor} className="animate-pulse" />
         <circle cx={lastP.x} cy={lastP.y} r="7" fill={strokeColor} fillOpacity="0.2" />
       </svg>
@@ -781,7 +707,7 @@ export function RocketClashGame() {
 
   return (
     <div className="w-full max-w-4xl mx-auto flex flex-col items-center select-none text-[#0B0B0B]">
-      {/* 1. Apple Top Navigation & Controls Bar */}
+      {/* 1. Top Navigation & Controls Bar */}
       <header className="w-full flex items-center justify-between px-4 py-3 bg-white border border-black/[0.06] rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.035)] mb-3">
         <div className="flex items-center gap-3">
           <Link
@@ -830,10 +756,34 @@ export function RocketClashGame() {
         </div>
       </header>
 
-      {/* 2. Live Crypto Price & Oracle Card (Apple Design Language) */}
+      {/* 2. THE GOLDEN RULE BANNER (Crystal-Clear Win Condition) */}
+      <div className={`w-full px-4 py-2 rounded-2xl mb-3 border text-center transition-all ${
+        isFinalTenSeconds
+          ? "bg-amber-50 border-amber-300 text-amber-900 shadow-md animate-pulse"
+          : "bg-slate-50 border-black/[0.06] text-slate-700"
+      }`}>
+        <div className="text-xs font-semibold flex items-center justify-center gap-2 flex-wrap">
+          {isFinalTenSeconds ? (
+            <>
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              <span>FINAL 10s VOLATILITY: ORACLE FREEZES WINNER AT 00:00!</span>
+            </>
+          ) : (
+            <>
+              <span className="text-emerald-700 font-bold">▲ BULL WINS</span> if price ends ABOVE Strike
+              <span className="text-slate-300">•</span>
+              <span className="text-red-600 font-bold">▼ BEAR WINS</span> if price ends BELOW Strike
+              <span className="text-slate-300">•</span>
+              <span className="text-[#6E4EF4] font-medium">Hold rocket in your zone to charge Multiplier (up to 5x)</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 3. Live Price & Oracle Card */}
       <section className="w-full bg-white border border-black/[0.06] rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.035)] p-4 mb-3">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-          {/* Asset Selector Segmented Control */}
+          {/* Asset Selector */}
           <div className="flex items-center gap-2">
             <div className="flex items-center bg-slate-100 p-1 rounded-xl">
               {(["MON", "BTC", "ETH"] as SupportedAsset[]).map((sym) => (
@@ -860,10 +810,10 @@ export function RocketClashGame() {
           </div>
 
           {/* Current Live Price vs Strike */}
-          <div className="flex items-baseline gap-3">
+          <div className="flex items-baseline gap-4">
             <div className="text-right">
               <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
-                Strike Price
+                Strike Baseline
               </div>
               <div className="text-xs font-mono font-semibold text-slate-600 tabular-nums">
                 ${strikePrice.toLocaleString(undefined, { minimumFractionDigits: selectedAsset === "BTC" ? 1 : 2, maximumFractionDigits: 2 })}
@@ -872,7 +822,7 @@ export function RocketClashGame() {
 
             <div className="text-right">
               <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
-                Current Price
+                Oracle Price
               </div>
               <div className="text-lg font-bold font-mono text-slate-900 tabular-nums flex items-center gap-1.5">
                 ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: selectedAsset === "BTC" ? 1 : 2, maximumFractionDigits: 2 })}
@@ -893,16 +843,9 @@ export function RocketClashGame() {
         <div className="w-full">
           {sparklineSVG}
         </div>
-
-        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 pt-1 border-t border-black/[0.04] mt-1">
-          <span>Dotted line = Round Strike Price ($ {strikePrice.toFixed(selectedAsset === "BTC" ? 1 : 2)})</span>
-          <span className={isDeltaPositive ? "text-[#14CF1C] font-semibold" : "text-[#FF3B30] font-semibold"}>
-            Flight Corridor Target: {isDeltaPositive ? "▲ Bull Ascent (+Altitude)" : "▼ Bear Dip (-Altitude)"}
-          </span>
-        </div>
       </section>
 
-      {/* 3. Main Game Arena (Daylight Apple Light Mode Canvas) */}
+      {/* 4. Main Game Arena (Light Mode Daylight Canvas) */}
       <div className="relative w-full aspect-[16/9] max-h-[460px] rounded-3xl overflow-hidden border border-black/[0.08] shadow-[0_4px_20px_rgba(0,0,0,0.06)] bg-[#F8FAFC]">
         <canvas
           ref={canvasRef}
@@ -915,45 +858,56 @@ export function RocketClashGame() {
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-black/[0.06]">
           <div
             className={`h-full transition-all duration-300 ${
-              timeLeft <= 5 ? "bg-red-500" : "bg-[#836EF9]"
+              isFinalTenSeconds ? "bg-amber-500 animate-pulse" : "bg-[#836EF9]"
             }`}
             style={{ width: `${roundProgressPercent}%` }}
           />
         </div>
 
-        {/* Floating Top HUD: P1, Match Duration Timer & Pot, P2 */}
+        {/* Floating Top HUD: P1, Match Duration Timer, P2 */}
         <div className="absolute top-3 left-0 right-0 px-4 sm:px-6 flex items-center justify-between pointer-events-none">
           {/* Player 1 HUD Card */}
           <div
-            className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
+            className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
               p1Telemetry.inZone
-                ? "bg-white/95 border-emerald-400 text-slate-900 shadow-emerald-500/10"
+                ? "bg-white/95 border-emerald-400 text-slate-900 shadow-emerald-500/15"
                 : "bg-white/85 border-black/[0.06] text-slate-800"
             }`}
           >
-            <span className="text-lg">🟣</span>
+            <span className="text-xl">🟣</span>
             <div>
-              <div className="text-[10px] font-semibold text-[#6E4EF4] leading-none uppercase">
-                P1 • {p1Prediction}
+              <div className="text-[10px] font-bold text-[#6E4EF4] leading-none uppercase">
+                P1 • {p1Ref.current.side}
               </div>
               <div className="text-xs sm:text-sm font-bold font-mono text-slate-900 flex items-center gap-1.5">
-                {p1Telemetry.score} pts
-                <span className="text-[11px] px-1 rounded bg-[#836EF9]/15 text-[#6E4EF4] font-mono">
-                  {p1Telemetry.mult}x
+                {p1Telemetry.mult}x
+                <span className="text-[10px] font-normal text-slate-500 font-mono">
+                  ({potentialP1Payout}M)
                 </span>
+              </div>
+              {/* Charge progress mini bar */}
+              <div className="w-16 h-1 bg-slate-200 rounded-full mt-1 overflow-hidden">
+                <div
+                  className="h-full bg-[#836EF9] transition-all"
+                  style={{ width: `${p1Telemetry.chargePercent}%` }}
+                />
               </div>
             </div>
           </div>
 
-          {/* Central Match Timer & Dynamic Pot */}
-          <div className="flex flex-col items-center bg-white/90 backdrop-blur-md px-4 py-1.5 rounded-2xl border border-black/[0.06] shadow-sm">
-            <div className="text-[10px] font-medium text-slate-400 uppercase tracking-widest flex items-center gap-1">
+          {/* Central Match Timer & Status */}
+          <div className={`flex flex-col items-center px-4 py-1.5 rounded-2xl border backdrop-blur-md shadow-sm transition-all ${
+            isFinalTenSeconds
+              ? "bg-amber-500/15 border-amber-400/80 text-amber-950 scale-105"
+              : "bg-white/90 border-black/[0.06] text-slate-900"
+          }`}>
+            <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest flex items-center gap-1">
               <Clock className="w-3 h-3 text-[#6E4EF4]" />
-              {selectedDuration}s Round • Pot: <span className="text-emerald-600 font-bold">{totalPot} MON</span>
+              {selectedDuration}s Round • {isDeltaPositive ? "🟢 BULL LEADING" : "🔴 BEAR LEADING"}
             </div>
             <div
               className={`text-xl sm:text-2xl font-bold font-mono tracking-tight tabular-nums ${
-                timeLeft <= 5 ? "text-red-500 animate-pulse" : "text-slate-900"
+                isFinalTenSeconds ? "text-red-600 animate-pulse font-black" : "text-slate-900"
               }`}
             >
               00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
@@ -962,24 +916,31 @@ export function RocketClashGame() {
 
           {/* Player 2 / Bot HUD Card */}
           <div
-            className={`flex items-center gap-2.5 px-3 py-1.5 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
+            className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
               p2Telemetry.inZone
-                ? "bg-white/95 border-emerald-400 text-slate-900 shadow-emerald-500/10"
+                ? "bg-white/95 border-emerald-400 text-slate-900 shadow-emerald-500/15"
                 : "bg-white/85 border-black/[0.06] text-slate-800"
             }`}
           >
             <div>
-              <div className="text-[10px] font-semibold text-emerald-600 uppercase text-right leading-none">
-                {gameMode === "solo" ? "AI ORACLE" : "P2 • " + (p1Prediction === "BULL" ? "BEAR" : "BULL")}
+              <div className="text-[10px] font-bold text-emerald-600 uppercase text-right leading-none">
+                {gameMode === "solo" ? "AI • " + p2Ref.current.side : "P2 • " + p2Ref.current.side}
               </div>
               <div className="text-xs sm:text-sm font-bold font-mono text-slate-900 flex items-center gap-1.5 justify-end">
-                <span className="text-[11px] px-1 rounded bg-emerald-500/15 text-emerald-700 font-mono">
-                  {p2Telemetry.mult}x
+                <span className="text-[10px] font-normal text-slate-500 font-mono">
+                  ({potentialP2Payout}M)
                 </span>
-                {p2Telemetry.score} pts
+                {p2Telemetry.mult}x
+              </div>
+              {/* Charge progress mini bar */}
+              <div className="w-16 h-1 bg-slate-200 rounded-full mt-1 overflow-hidden ml-auto">
+                <div
+                  className="h-full bg-emerald-500 transition-all"
+                  style={{ width: `${p2Telemetry.chargePercent}%` }}
+                />
               </div>
             </div>
-            <span className="text-lg">🐸</span>
+            <span className="text-xl">🐸</span>
           </div>
         </div>
 
@@ -990,11 +951,10 @@ export function RocketClashGame() {
               <Flame className="w-7 h-7 text-[#836EF9]" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mb-1">
-              Rocket Clash Arena
+              Rocket Clash: Bull vs Bear
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 max-w-md mb-4 leading-relaxed">
-              Predict {selectedAsset} price movement. Hold to thrust, hover in the{" "}
-              <span className="text-emerald-600 font-semibold">Live Price Corridor</span> to stack up to 5x altitude multipliers!
+              At second 00:00, the <strong>Pyth Oracle price decides the winner</strong>. Hold thrusters to keep your rocket in your territory and charge your <strong>payout multiplier up to 5.0x</strong>!
             </p>
 
             {/* Round Settings Row */}
@@ -1019,32 +979,34 @@ export function RocketClashGame() {
                 ))}
               </div>
 
-              {/* Prediction Stance */}
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                <span className="text-[10px] font-medium text-slate-500 px-2">TARGET:</span>
-                <button
-                  onClick={() => setP1Prediction("BULL")}
-                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                    p1Prediction === "BULL"
-                      ? "bg-white text-[#14CF1C] shadow-sm font-bold"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                >
-                  <TrendingUp className="w-3.5 h-3.5 text-[#14CF1C]" />
-                  BULL (UP)
-                </button>
-                <button
-                  onClick={() => setP1Prediction("BEAR")}
-                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                    p1Prediction === "BEAR"
-                      ? "bg-white text-[#FF3B30] shadow-sm font-bold"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                >
-                  <TrendingDown className="w-3.5 h-3.5 text-[#FF3B30]" />
-                  BEAR (DOWN)
-                </button>
-              </div>
+              {/* Player Stance (In Solo Mode) */}
+              {gameMode === "solo" && (
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                  <span className="text-[10px] font-medium text-slate-500 px-2">YOUR SIDE:</span>
+                  <button
+                    onClick={() => setPlayerStance("BULL")}
+                    className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      playerStance === "BULL"
+                        ? "bg-white text-[#14CF1C] shadow-sm font-bold"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <TrendingUp className="w-3.5 h-3.5 text-[#14CF1C]" />
+                    BULL (UP)
+                  </button>
+                  <button
+                    onClick={() => setPlayerStance("BEAR")}
+                    className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      playerStance === "BEAR"
+                        ? "bg-white text-[#FF3B30] shadow-sm font-bold"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <TrendingDown className="w-3.5 h-3.5 text-[#FF3B30]" />
+                    BEAR (DOWN)
+                  </button>
+                </div>
+              )}
 
               {/* Game Mode */}
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
@@ -1054,7 +1016,7 @@ export function RocketClashGame() {
                     gameMode === "solo" ? "bg-white text-slate-900 shadow-sm font-semibold" : "text-slate-500"
                   }`}
                 >
-                  <User className="w-3 h-3" /> Solo
+                  <User className="w-3 h-3" /> Solo vs AI
                 </button>
                 <button
                   onClick={() => setGameMode("versus")}
@@ -1071,43 +1033,51 @@ export function RocketClashGame() {
               onClick={startGame}
               className="px-8 py-3 rounded-2xl bg-[#6E4EF4] hover:bg-[#5E3DE0] text-white font-semibold text-sm tracking-wide shadow-md shadow-purple-500/20 active:scale-[0.98] transition-all"
             >
-              Start {selectedDuration}s Clash Round
+              Launch {selectedDuration}s Clash Round
             </button>
           </div>
         )}
 
-        {/* Game Over Settlement Modal (Clean Apple Card) */}
+        {/* Game Over Settlement Modal */}
         {gameState === "gameover" && (
           <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
-            <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-600 mb-2">
-              <Trophy className="w-7 h-7" />
+            <div className={`p-3.5 rounded-2xl mb-2 ${
+              winner === "P1" ? "bg-emerald-500/15 text-emerald-600" : "bg-red-500/15 text-red-600"
+            }`}>
+              {winner === "P1" ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
             </div>
 
             <div className="text-[11px] font-mono text-slate-500 uppercase tracking-widest mb-1">
-              Match Completed ({selectedDuration}s)
+              Oracle Settled at 00:00
             </div>
 
             <h3 className="text-2xl font-bold text-slate-900 mb-1">
-              {winner === "P1" ? "Gmonad Alpha Wins! 🎉" : winner === "P2" ? "Pepe Rocket Wins! 🐸" : "Tie Clash! 🤝"}
+              {winner === "P1"
+                ? "You Won! 🎉"
+                : winner === "P2"
+                ? "P2 Won the Clash! 🐸"
+                : "Oracle House Won 💥"}
             </h3>
 
             <p className="text-xs text-slate-600 mb-4 font-mono">
-              Outcome: <span className={isDeltaPositive ? "text-emerald-600 font-bold" : "text-red-500 font-bold"}>
-                {selectedAsset} ended {isDeltaPositive ? `UP (+${livePriceDelta.toFixed(2)}%)` : `DOWN (${livePriceDelta.toFixed(2)}%)`}
-              </span> • Pot: <span className="font-bold text-slate-900">{totalPot} MON</span>
+              Strike: ${strikePrice.toFixed(2)} → Final: ${currentPrice.toFixed(2)} (
+              <span className={winningSide === "BULL" ? "text-emerald-600 font-bold" : "text-red-500 font-bold"}>
+                {winningSide === "BULL" ? "▲ BULL WON" : "▼ BEAR WON"}
+              </span>
+              )
             </p>
 
             <div className="grid grid-cols-2 gap-3 w-full max-w-xs mb-5">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
-                <div className="text-[10px] text-slate-500 font-mono">P1 TOTAL</div>
+                <div className="text-[10px] text-slate-500 font-mono">P1 MULTIPLIER</div>
                 <div className="text-lg font-bold text-slate-900 font-mono tabular-nums">
-                  {Math.floor(p1Ref.current.score * p1Ref.current.multiplier)}
+                  {p1Ref.current.multiplier.toFixed(2)}x
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
-                <div className="text-[10px] text-slate-500 font-mono">P2 TOTAL</div>
-                <div className="text-lg font-bold text-slate-900 font-mono tabular-nums">
-                  {Math.floor(p2Ref.current.score * p2Ref.current.multiplier)}
+                <div className="text-[10px] text-slate-500 font-mono">PAYOUT</div>
+                <div className="text-lg font-bold text-emerald-600 font-mono tabular-nums">
+                  {winner === "P1" ? `${potentialP1Payout} MON` : "0.000 MON"}
                 </div>
               </div>
             </div>
@@ -1117,13 +1087,13 @@ export function RocketClashGame() {
               className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#6E4EF4] hover:bg-[#5E3DE0] text-white font-semibold text-xs tracking-wide shadow-sm active:scale-[0.98] transition-all"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Play Another {selectedDuration}s Round
+              Play Rematch ({selectedDuration}s)
             </button>
           </div>
         )}
       </div>
 
-      {/* 4. Direct Manipulation Physical Controls (Instant pointerdown feedback) */}
+      {/* 5. Direct Manipulation Controls */}
       <div className="w-full mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
         {/* P1 Controls Button */}
         <button
@@ -1138,7 +1108,9 @@ export function RocketClashGame() {
               🟣
             </div>
             <div className="text-left">
-              <div className="text-xs font-semibold text-[#6E4EF4]">P1 • Hold to Fire Thrusters</div>
+              <div className="text-xs font-semibold text-[#6E4EF4]">
+                P1 ({p1Ref.current.side}) • Hold to Fly & Charge Multiplier
+              </div>
               <div className="text-xs font-mono text-slate-500">HOLD [SPACE] / [W] / TAP</div>
             </div>
           </div>
@@ -1159,7 +1131,9 @@ export function RocketClashGame() {
                 🐸
               </div>
               <div className="text-left">
-                <div className="text-xs font-semibold text-emerald-700">P2 • Hold to Fire Thrusters</div>
+                <div className="text-xs font-semibold text-emerald-700">
+                  P2 ({p2Ref.current.side}) • Hold to Fly & Charge Multiplier
+                </div>
                 <div className="text-xs font-mono text-slate-500">HOLD [ARROW UP] / TAP</div>
               </div>
             </div>
@@ -1172,8 +1146,8 @@ export function RocketClashGame() {
                 🤖
               </div>
               <div>
-                <div className="text-xs font-semibold text-slate-800">AI Oracle Competitor</div>
-                <div className="text-xs text-slate-500 font-mono">Automated Pyth corridor tracking</div>
+                <div className="text-xs font-semibold text-slate-800">AI Oracle Rival ({p2Ref.current.side})</div>
+                <div className="text-xs text-slate-500 font-mono">Opposite side competitor</div>
               </div>
             </div>
             <div className="text-[10px] font-mono px-2 py-1 rounded bg-slate-200/80 text-slate-700 font-semibold">
@@ -1183,25 +1157,25 @@ export function RocketClashGame() {
         )}
       </div>
 
-      {/* 5. Apple Design Info Cards (Clean surfaces directly on page) */}
+      {/* 6. Apple Design Info Cards */}
       <div className="w-full mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Zap className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            10,000 TPS Finality
+            Last-Second Volatility Drama
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            High-frequency {selectedDuration}s rounds settled directly with sub-second finality and near-zero fees on Monad.
+            The final price tick at 00:00 decides the winner. Even a 0.01% candle reversal turns the entire round!
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-            Live Oracle Tracking
+            Active Leverage Charging
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            The target flight corridor shifts dynamically based on real-time {selectedAsset}/USD price volatility.
+            Hold your rocket in your territory (Bull upper / Bear lower) to boost your win multiplier from 1.0x to 5.0x.
           </p>
         </div>
 
@@ -1211,7 +1185,7 @@ export function RocketClashGame() {
             House Monetization
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            A 2.5% protocol fee from each round settlement flows automatically into the Duelio House Treasury.
+            2.5% protocol cut flows automatically into the Duelio House Treasury upon clash settlement.
           </p>
         </div>
       </div>
