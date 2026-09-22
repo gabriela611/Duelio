@@ -3,7 +3,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { soundEngine } from "./gameAudio";
 import {
-  Flame,
   Trophy,
   Volume2,
   VolumeX,
@@ -17,43 +16,31 @@ import {
   TrendingDown,
   Coins,
   Percent,
-  Gauge,
+  CheckCircle2,
+  Clock,
+  ArrowUpRight,
+  ArrowDownRight,
   Sparkles,
-  Activity,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
-interface RocketState {
-  y: number;
-  vy: number;
-  tilt: number;
-  thrusting: boolean;
-  score: number;
-  multiplier: number;
-  inCorridor: boolean;
-  name: string;
-  avatar: string;
-  color: string;
-  accentColor: string;
-}
+type PredictionCall = "UP" | "DOWN" | null;
+type RoundPhase = "LOCK_IN" | "RESOLVING" | "ROUND_RESULT";
 
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  alpha: number;
-  color: string;
-}
-
-interface PriceSample {
-  x: number;
-  price: number;
-  y: number;
+interface ResolvedCandle {
+  roundNumber: number;
+  openPrice: number;
+  closePrice: number;
+  highPrice: number;
+  lowPrice: number;
+  winnerCall: "UP" | "DOWN" | "DRAW";
+  p1Call: PredictionCall;
+  p2Call: PredictionCall;
+  p1Won: boolean;
+  p2Won: boolean;
 }
 
 export function RocketClashGame() {
@@ -64,372 +51,294 @@ export function RocketClashGame() {
   const priceState = usePriceStream(selectedAsset);
   const { currentPrice, isLive } = priceState;
 
-  // Game configuration & round state
+  // Game configuration & match state
   const [gameMode, setGameMode] = useState<"solo" | "versus">("solo");
   const [stakeMon, setStakeMon] = useState<number>(0.25);
-  const [gameState, setGameState] = useState<"idle" | "playing" | "gameover">("idle");
-  const [timeLeft, setTimeLeft] = useState<number>(20);
+  const [gameState, setGameState] = useState<"idle" | "countdown" | "playing" | "gameover">("idle");
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [winner, setWinner] = useState<"P1" | "P2" | "DRAW" | null>(null);
+  const [matchWinner, setMatchWinner] = useState<"P1" | "P2" | "DRAW" | null>(null);
 
-  // Live Strike price locked at start of round
-  const [strikePrice, setStrikePrice] = useState<number>(currentPrice);
-  const strikePriceRef = useRef<number>(currentPrice);
+  // 4-Candle Blitz State
+  const [currentRound, setCurrentRound] = useState<number>(1);
+  const [roundPhase, setRoundPhase] = useState<RoundPhase>("LOCK_IN");
+  const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5.0);
+  const [p1Score, setP1Score] = useState<number>(0);
+  const [p2Score, setP2Score] = useState<number>(0);
+
+  // Player predictions for current round
+  const [p1Call, setP1Call] = useState<PredictionCall>(null);
+  const [p2Call, setP2Call] = useState<PredictionCall>(null);
+  const [aiThought, setAiThought] = useState<string>("Analyzing price momentum... 📊");
+
+  // Round candle prices
+  const roundOpenPriceRef = useRef<number>(currentPrice);
+  const roundHighPriceRef = useRef<number>(currentPrice);
+  const roundLowPriceRef = useRef<number>(currentPrice);
   const currentPriceRef = useRef<number>(currentPrice);
+  const [roundOpenPrice, setRoundOpenPrice] = useState<number>(currentPrice);
 
   useEffect(() => {
     currentPriceRef.current = currentPrice;
-    if (gameState === "idle") {
-      setStrikePrice(currentPrice);
-      strikePriceRef.current = currentPrice;
+    if (gameState === "playing" && roundPhase === "RESOLVING") {
+      roundHighPriceRef.current = Math.max(roundHighPriceRef.current, currentPrice);
+      roundLowPriceRef.current = Math.min(roundLowPriceRef.current, currentPrice);
     }
-  }, [currentPrice, gameState]);
+  }, [currentPrice, gameState, roundPhase]);
 
-  // Live HUD telemetry
-  const [p1Telemetry, setP1Telemetry] = useState({ score: 0, mult: 1.0, inZone: false });
-  const [p2Telemetry, setP2Telemetry] = useState({ score: 0, mult: 1.0, inZone: false });
+  // History of completed rounds
+  const [resolvedCandles, setResolvedCandles] = useState<ResolvedCandle[]>([]);
 
-  // Physics & Animation references
+  // Physics & Animation refs
   const animFrameId = useRef<number>(0);
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const priceHistoryBufferRef = useRef<PriceSample[]>([]);
+  const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const p1CallRef = useRef<PredictionCall>(null);
+  const p2CallRef = useRef<PredictionCall>(null);
 
-  // Real-time Pyth Oracle Corridor
-  const corridorRef = useRef({
-    topY: 160,
-    bottomY: 280,
-    targetY: 220,
-    smoothedY: 220,
-  });
+  // Ships position for track animations
+  const p1TrackX = useRef<number>(120);
+  const p2TrackX = useRef<number>(120);
 
-  const p1Ref = useRef<RocketState>({
-    y: 220,
-    vy: 0,
-    tilt: 0,
-    thrusting: false,
-    score: 0,
-    multiplier: 1.0,
-    inCorridor: true,
-    name: "Gmonad Alpha",
-    avatar: "🟣",
-    color: "#6E4EF4", // Apple-style Monad Deep Purple
-    accentColor: "#836EF9",
-  });
-
-  const p2Ref = useRef<RocketState>({
-    y: 220,
-    vy: 0,
-    tilt: 0,
-    thrusting: false,
-    score: 0,
-    multiplier: 1.0,
-    inCorridor: true,
-    name: "MemeBot AI",
-    avatar: "🤖",
-    color: "#0F172A", // Sleek Cupertino Slate
-    accentColor: "#10B981",
-  });
-
-  const particlesRef = useRef<Particle[]>([]);
-
-  // Sound toggle
+  // Audio toggle
   const toggleSound = () => {
     const next = !isMuted;
     setIsMuted(next);
     soundEngine.setMuted(next);
   };
 
-  // Keyboard controls with scroll prevention
+  // Lock P1 Prediction Call
+  const handleP1Call = useCallback((call: "UP" | "DOWN") => {
+    if (gameState !== "playing" || roundPhase !== "LOCK_IN") return;
+    setP1Call(call);
+    p1CallRef.current = call;
+    soundEngine.playLockSound();
+  }, [gameState, roundPhase]);
+
+  // Lock P2 Prediction Call (Versus mode)
+  const handleP2Call = useCallback((call: "UP" | "DOWN") => {
+    if (gameState !== "playing" || roundPhase !== "LOCK_IN" || gameMode !== "versus") return;
+    setP2Call(call);
+    p2CallRef.current = call;
+    soundEngine.playLockSound();
+  }, [gameState, roundPhase, gameMode]);
+
+  // Keyboard hotkeys
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "KeyW" || e.code === "Space" || e.code === "ArrowUp") {
+      if (e.code === "KeyA" || e.code === "ArrowLeft" || e.code === "ArrowUp") {
         e.preventDefault();
-      }
-
-      if (gameState !== "playing") return;
-
-      if (e.code === "KeyW" || e.code === "Space") {
-        if (!p1Ref.current.thrusting) {
-          p1Ref.current.thrusting = true;
-          soundEngine.startThrust(true);
-        }
-      }
-      if (e.code === "ArrowUp") {
-        if (gameMode === "versus" && !p2Ref.current.thrusting) {
-          p2Ref.current.thrusting = true;
-          soundEngine.startThrust(false);
-        }
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === "KeyW" || e.code === "Space" || e.code === "ArrowUp") {
+        handleP1Call("UP");
+      } else if (e.code === "KeyD" || e.code === "ArrowRight" || e.code === "ArrowDown") {
         e.preventDefault();
-      }
-
-      if (e.code === "KeyW" || e.code === "Space") {
-        p1Ref.current.thrusting = false;
-        soundEngine.stopThrust();
-      }
-      if (e.code === "ArrowUp") {
-        p2Ref.current.thrusting = false;
-        if (gameMode === "versus") soundEngine.stopThrust();
+        handleP1Call("DOWN");
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown, { passive: false });
-    window.addEventListener("keyup", handleKeyUp, { passive: false });
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, [gameState, gameMode]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleP1Call]);
 
-  // Round management
-  const startGame = useCallback(() => {
-    setWinner(null);
-    setTimeLeft(20);
-    setGameState("playing");
+  // Start 4-Round Blitz Match
+  const startMatch = useCallback(() => {
+    setMatchWinner(null);
+    setGameState("countdown");
+    setResolvedCandles([]);
+    setCurrentRound(1);
+    setP1Score(0);
+    setP2Score(0);
+    setP1Call(null);
+    setP2Call(null);
+    p1CallRef.current = null;
+    p2CallRef.current = null;
+    p1TrackX.current = 120;
+    p2TrackX.current = 120;
 
-    // Lock live strike price at round start
-    const lockedPrice = currentPriceRef.current;
-    setStrikePrice(lockedPrice);
-    strikePriceRef.current = lockedPrice;
-
-    p1Ref.current = {
-      ...p1Ref.current,
-      y: 220,
-      vy: 0,
-      tilt: 0,
-      thrusting: false,
-      score: 0,
-      multiplier: 1.0,
-      inCorridor: true,
-    };
-
-    p2Ref.current = {
-      ...p2Ref.current,
-      y: 220,
-      vy: 0,
-      tilt: 0,
-      thrusting: false,
-      score: 0,
-      multiplier: 1.0,
-      inCorridor: true,
-      name: gameMode === "solo" ? "MemeBot AI" : "Rival Challenger",
-      avatar: gameMode === "solo" ? "🤖" : "🐸",
-    };
-
-    particlesRef.current = [];
-    priceHistoryBufferRef.current = [];
-
-    if (roundTimerRef.current) clearInterval(roundTimerRef.current);
-
-    let seconds = 20;
-    roundTimerRef.current = setInterval(() => {
-      seconds--;
-      setTimeLeft(seconds);
-      if (seconds <= 5 && seconds > 0) {
-        soundEngine.playCountdownTick(true);
-      } else if (seconds > 0) {
-        soundEngine.playCountdownTick(false);
-      }
-
-      if (seconds <= 0) {
-        clearInterval(roundTimerRef.current!);
-        soundEngine.stopThrust();
-        setGameState("gameover");
-
-        const s1 = Math.floor(p1Ref.current.score * p1Ref.current.multiplier);
-        const s2 = Math.floor(p2Ref.current.score * p2Ref.current.multiplier);
-
-        if (s1 === s2) {
-          setWinner("DRAW");
-        } else if (s1 > s2) {
-          setWinner("P1");
-          soundEngine.playVictoryJingle();
-          try {
-            confetti({
-              particleCount: 75,
-              spread: 65,
-              origin: { y: 0.6 },
-              colors: ["#6E4EF4", "#10B981", "#F59E0B"],
-            });
-          } catch (_) {}
-        } else {
-          setWinner("P2");
-          soundEngine.playStallSound();
-        }
+    let c = 3;
+    soundEngine.playCountdownBeep(false);
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = setInterval(() => {
+      c--;
+      if (c > 0) {
+        soundEngine.playCountdownBeep(false);
+      } else {
+        clearInterval(countdownTimerRef.current!);
+        soundEngine.playCountdownBeep(true);
+        startRoundCycle(1, 0, 0);
       }
     }, 1000);
-  }, [gameMode]);
+  }, [currentPrice]);
+
+  // Execute 5-second Round Cycle
+  const startRoundCycle = (roundNum: number, currentP1Score: number, currentP2Score: number) => {
+    setGameState("playing");
+    setCurrentRound(roundNum);
+    setRoundPhase("LOCK_IN");
+    setP1Call(null);
+    setP2Call(null);
+    p1CallRef.current = null;
+    p2CallRef.current = null;
+
+    // Snapshot Open Price
+    const openP = currentPriceRef.current;
+    roundOpenPriceRef.current = openP;
+    roundHighPriceRef.current = openP;
+    roundLowPriceRef.current = openP;
+    setRoundOpenPrice(openP);
+
+    // AI Prediction Decision in Solo mode (Locks around T=1.2s)
+    if (gameMode === "solo") {
+      setAiThought("Analyzing order book momentum... 👀");
+      setTimeout(() => {
+        // AI reads subtle micro-momentum or flips 50/50 with momentum bias
+        const aiPick: "UP" | "DOWN" = Math.random() > 0.48 ? "UP" : "DOWN";
+        setP2Call(aiPick);
+        p2CallRef.current = aiPick;
+        setAiThought(aiPick === "UP" ? "Bullish trend! Locking SUBE 🟢" : "Bearish breakdown! Locking BAJA 🔴");
+      }, 1200);
+    }
+
+    // 5.0-second round clock
+    let timeLeftMs = 5000;
+    const intervalTime = 100;
+
+    if (roundTimerRef.current) clearInterval(roundTimerRef.current);
+    roundTimerRef.current = setInterval(() => {
+      timeLeftMs -= intervalTime;
+      setRoundTimeLeft(Number((timeLeftMs / 1000).toFixed(1)));
+
+      // At T = 3.0s (2 seconds elapsed), lock-in ends and candle resolves
+      if (timeLeftMs <= 3000 && timeLeftMs > 2800) {
+        setRoundPhase("RESOLVING");
+        // Auto-default to UP if player didn't pick
+        if (!p1CallRef.current) {
+          setP1Call("UP");
+          p1CallRef.current = "UP";
+        }
+        if (gameMode === "solo" && !p2CallRef.current) {
+          setP2Call("DOWN");
+          p2CallRef.current = "DOWN";
+        }
+      }
+
+      // Round Finished (0s)
+      if (timeLeftMs <= 0) {
+        clearInterval(roundTimerRef.current!);
+        resolveRound(roundNum, currentP1Score, currentP2Score);
+      }
+    }, intervalTime);
+  };
+
+  // Evaluate Round Result
+  const resolveRound = (roundNum: number, currentP1Score: number, currentP2Score: number) => {
+    setRoundPhase("ROUND_RESULT");
+    const openP = roundOpenPriceRef.current;
+    const closeP = currentPriceRef.current;
+    const highP = roundHighPriceRef.current;
+    const lowP = roundLowPriceRef.current;
+
+    let winnerCall: "UP" | "DOWN" | "DRAW" = "DRAW";
+    if (closeP > openP) winnerCall = "UP";
+    else if (closeP < openP) winnerCall = "DOWN";
+
+    const p1 = p1CallRef.current;
+    const p2 = p2CallRef.current;
+
+    const p1Won = p1 === winnerCall;
+    const p2Won = p2 === winnerCall;
+
+    let newP1Score = currentP1Score;
+    let newP2Score = currentP2Score;
+
+    if (p1Won) {
+      newP1Score += 1;
+      soundEngine.playRoundWinSound();
+    }
+    if (p2Won) {
+      newP2Score += 1;
+    }
+
+    setP1Score(newP1Score);
+    setP2Score(newP2Score);
+
+    const candleResult: ResolvedCandle = {
+      roundNumber: roundNum,
+      openPrice: openP,
+      closePrice: closeP,
+      highPrice: highP,
+      lowPrice: lowP,
+      winnerCall,
+      p1Call: p1,
+      p2Call: p2,
+      p1Won,
+      p2Won,
+    };
+
+    setResolvedCandles((prev) => [...prev, candleResult]);
+
+    // Check match completion (4 rounds complete, or tiebreaker needed)
+    setTimeout(() => {
+      if (roundNum >= 4) {
+        // Match concludes
+        finalizeMatch(newP1Score, newP2Score);
+      } else {
+        // Next Round
+        startRoundCycle(roundNum + 1, newP1Score, newP2Score);
+      }
+    }, 1500);
+  };
+
+  // Finalize Match Winner
+  const finalizeMatch = (finalP1: number, finalP2: number) => {
+    setGameState("gameover");
+    if (finalP1 > finalP2) {
+      setMatchWinner("P1");
+      soundEngine.playVictoryJingle();
+      try {
+        confetti({
+          particleCount: 85,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ["#6E4EF4", "#10B981", "#F59E0B"],
+        });
+      } catch (_) {}
+    } else if (finalP2 > finalP1) {
+      setMatchWinner("P2");
+      soundEngine.playStallSound();
+    } else {
+      setMatchWinner("DRAW");
+    }
+  };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (roundTimerRef.current) clearInterval(roundTimerRef.current);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       cancelAnimationFrame(animFrameId.current);
-      soundEngine.stopThrust();
     };
   }, []);
 
-  // Main Canvas & Game Physics Loop
+  // Main Canvas Rendering Loop (Apple Design System)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let lastTime = performance.now();
-
-    const render = (time: number) => {
-      const dt = Math.min((time - lastTime) / 1000, 0.1);
-      lastTime = time;
-
+    const render = () => {
       const width = canvas.width;
       const height = canvas.height;
-      const strikeCenterY = height * 0.5;
 
-      // 1. UPDATE REAL-TIME PYTH ORACLE CORRIDOR
-      if (gameState === "playing") {
-        const currP = currentPriceRef.current;
-        const strikeP = strikePriceRef.current;
-
-        // Calculate REAL-TIME price delta percentage
-        const priceDeltaPercent = strikeP > 0 ? ((currP - strikeP) / strikeP) * 100 : 0;
-
-        // Apple Design Dynamic Scaling:
-        // Sensitivity calibrated so ±0.15% price delta spans comfortable screen altitude
-        const deltaPx = Math.max(-130, Math.min(130, priceDeltaPercent * 450));
-        const rawTargetY = strikeCenterY - deltaPx;
-
-        // Smooth spring-damped corridor interpolation
-        const corr = corridorRef.current;
-        corr.targetY = rawTargetY;
-        corr.smoothedY += (rawTargetY - corr.smoothedY) * Math.min(1, 6.0 * dt);
-
-        const corridorHeight = 118;
-        corr.topY = Math.max(28, corr.smoothedY - corridorHeight / 2);
-        corr.bottomY = Math.min(height - 28, corr.smoothedY + corridorHeight / 2);
-
-        // Record real price point for scrolling line visualization
-        const buffer = priceHistoryBufferRef.current;
-        buffer.push({
-          x: width,
-          price: currP,
-          y: corr.smoothedY,
-        });
-
-        // Scroll price samples leftward
-        for (let i = buffer.length - 1; i >= 0; i--) {
-          buffer[i].x -= 2.2;
-          if (buffer[i].x < -20) {
-            buffer.splice(i, 1);
-          }
-        }
-
-        // 2. INTELLIGENT MEMEBOT AI BEHAVIOR
-        if (gameMode === "solo") {
-          const p2 = p2Ref.current;
-          // AI tracks the smoothed corridor center with calibrated human reaction jitter
-          const targetY = corr.smoothedY + Math.sin(time * 0.0025) * 8;
-          const dist = p2.y - targetY;
-
-          if (dist > 7 && p2.vy > -1.2) {
-            p2.thrusting = true;
-          } else if (dist < -7 && p2.vy < 0.9) {
-            p2.thrusting = false;
-          }
-        }
-
-        // 3. ROCKET PHYSICS & SCORING
-        [p1Ref.current, p2Ref.current].forEach((r, idx) => {
-          const gravity = 0.38;
-          const thrust = -0.84;
-
-          if (r.thrusting) {
-            r.vy += thrust;
-            // Spawn subtle flame particles
-            const rocketX = idx === 0 ? width * 0.28 : width * 0.44;
-            particlesRef.current.push({
-              x: rocketX - 16,
-              y: r.y + (Math.random() - 0.5) * 4,
-              vx: -(Math.random() * 20 + 10),
-              vy: (Math.random() - 0.5) * 8,
-              size: Math.random() * 3 + 1.5,
-              alpha: 0.85,
-              color: idx === 0 ? "#6E4EF4" : "#10B981",
-            });
-          }
-
-          r.vy += gravity;
-          r.vy *= 0.965; // Atmospheric drag
-          r.y += r.vy;
-
-          // Aerodynamic tilt
-          r.tilt = Math.max(-22, Math.min(28, r.vy * 3.4));
-
-          // Apple-style soft bounce on ceiling / floor boundaries
-          if (r.y < 26) {
-            r.y = 26;
-            r.vy = 1.0;
-            soundEngine.playLiquidationWarning();
-          }
-          if (r.y > height - 32) {
-            r.y = height - 32;
-            r.vy = -1.0;
-            soundEngine.playLiquidationWarning();
-          }
-
-          // In-Corridor Scoring & Multiplier
-          if (r.y >= corr.topY && r.y <= corr.bottomY) {
-            r.inCorridor = true;
-            r.score += 2.2;
-            r.multiplier = Math.min(5.0, r.multiplier + 0.006);
-            if (Math.random() < 0.08) soundEngine.playScorePing();
-          } else {
-            r.inCorridor = false;
-            r.multiplier = Math.max(1.0, r.multiplier - 0.008);
-          }
-        });
-
-        // Update particle physics
-        for (let i = particlesRef.current.length - 1; i >= 0; i--) {
-          const p = particlesRef.current[i];
-          p.x += p.vx * dt;
-          p.y += p.vy * dt;
-          p.alpha -= 2.2 * dt;
-          p.size = Math.max(0.2, p.size - 2 * dt);
-
-          if (p.alpha <= 0) {
-            particlesRef.current.splice(i, 1);
-          }
-        }
-
-        // Sync React HUD telemetry
-        setP1Telemetry({
-          score: Math.floor(p1Ref.current.score),
-          mult: Number(p1Ref.current.multiplier.toFixed(2)),
-          inZone: p1Ref.current.inCorridor,
-        });
-        setP2Telemetry({
-          score: Math.floor(p2Ref.current.score),
-          mult: Number(p2Ref.current.multiplier.toFixed(2)),
-          inZone: p2Ref.current.inCorridor,
-        });
-      }
-
-      // 4. APPLE DESIGN CANVAS RENDERING
+      // 1. APPLE LIGHT MODE SURFACE
       ctx.clearRect(0, 0, width, height);
 
-      // Clean Apple Light Mode Surface
       const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
       bgGrad.addColorStop(0, "#FFFFFF");
       bgGrad.addColorStop(1, "#F8F8F7");
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // Subtle Cupertino Grid Lines
+      // Subtle Cupertino Grid
       ctx.strokeStyle = "rgba(0, 0, 0, 0.04)";
       ctx.lineWidth = 1;
       for (let y = 30; y < height; y += 45) {
@@ -439,217 +348,161 @@ export function RocketClashGame() {
         ctx.stroke();
       }
 
-      // Strike Price Center Baseline
+      // 2. CHECKPOINT RACE TRACK (Across Top of Canvas)
+      const trackY = 54;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(80, trackY);
+      ctx.lineTo(width - 80, trackY);
+      ctx.stroke();
+
+      // 4 Checkpoint Nodes
+      for (let i = 1; i <= 4; i++) {
+        const nodeX = 80 + ((width - 160) / 3) * (i - 1);
+        const isPast = i < currentRound;
+        const isCurrent = i === currentRound;
+
+        ctx.fillStyle = isPast ? "#10B981" : isCurrent ? "#6E4EF4" : "#E2E8F0";
+        ctx.beginPath();
+        ctx.arc(nodeX, trackY, isCurrent ? 9 : 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.font = "bold 9px system-ui, -apple-system, sans-serif";
+        ctx.fillStyle = isCurrent ? "#6E4EF4" : "#64748B";
+        ctx.textAlign = "center";
+        ctx.fillText(`R${i}`, nodeX, trackY - 14);
+      }
+
+      // Smoothly animate ships towards current score checkpoint
+      const targetP1X = 80 + ((width - 160) / 4) * p1Score;
+      const targetP2X = 80 + ((width - 160) / 4) * p2Score;
+      p1TrackX.current += (targetP1X - p1TrackX.current) * 0.1;
+      p2TrackX.current += (targetP2X - p2TrackX.current) * 0.1;
+
+      // Draw P1 Ship on Track
+      ctx.fillStyle = "#6E4EF4";
+      ctx.beginPath();
+      ctx.arc(p1TrackX.current, trackY - 1, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 3. CINEMATIC REAL-TIME CANDLESTICK DISPLAY (Center Stage)
+      const arenaCenterY = height * 0.58;
+      const arenaCenterX = width * 0.5;
+
+      // Strike Price Reference Baseline
       ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 6]);
       ctx.beginPath();
-      ctx.moveTo(0, strikeCenterY);
-      ctx.lineTo(width, strikeCenterY);
+      ctx.moveTo(40, arenaCenterY);
+      ctx.lineTo(width - 40, arenaCenterY);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Strike Price Tag Badge on Left
+      // Baseline Price Badge
       ctx.fillStyle = "#FFFFFF";
       ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(14, strikeCenterY - 10, 110, 20, 6);
+      ctx.roundRect(40, arenaCenterY - 11, 120, 22, 6);
       ctx.fill();
       ctx.stroke();
 
-      ctx.font = "bold 9px system-ui, -apple-system, sans-serif";
-      ctx.fillStyle = "#64748B";
+      ctx.font = "bold 10px monospace";
+      ctx.fillStyle = "#475569";
       ctx.textAlign = "center";
-      ctx.fillText(`STRIKE: $${strikePriceRef.current.toFixed(selectedAsset === "BTC" ? 1 : 2)}`, 69, strikeCenterY + 3.5);
+      ctx.fillText(`OPEN: $${roundOpenPriceRef.current.toFixed(selectedAsset === "BTC" ? 1 : 2)}`, 100, arenaCenterY + 4);
 
-      // Render Dynamic Pyth Green Prediction Corridor
-      const corr = corridorRef.current;
-      const corridorHeight = corr.bottomY - corr.topY;
+      // Render Historical Completed Candles from this match
+      resolvedCandles.forEach((c, idx) => {
+        const candleX = 190 + idx * 85;
+        const isGreen = c.winnerCall === "UP";
+        const color = isGreen ? "#10B981" : "#EF4444";
 
-      // Soft emerald corridor fill
-      const corridorGrad = ctx.createLinearGradient(0, corr.topY, 0, corr.bottomY);
-      corridorGrad.addColorStop(0, "rgba(16, 185, 129, 0.04)");
-      corridorGrad.addColorStop(0.5, "rgba(16, 185, 129, 0.12)");
-      corridorGrad.addColorStop(1, "rgba(16, 185, 129, 0.04)");
+        const deltaClose = ((c.closePrice - c.openPrice) / c.openPrice) * 100;
+        const candleH = Math.max(12, Math.min(80, Math.abs(deltaClose) * 400));
+        const candleY = isGreen ? arenaCenterY - candleH : arenaCenterY;
 
-      ctx.fillStyle = corridorGrad;
-      ctx.fillRect(0, corr.topY, width, corridorHeight);
+        // Wick
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(candleX + 16, arenaCenterY - 50);
+        ctx.lineTo(candleX + 16, arenaCenterY + 50);
+        ctx.stroke();
 
-      // Corridor Top & Bottom Boundaries (Apple frosted hairline)
-      ctx.strokeStyle = "rgba(16, 185, 129, 0.5)";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([8, 4]);
+        // Body
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(candleX, candleY, 32, candleH, 4);
+        ctx.fill();
 
-      ctx.beginPath();
-      ctx.moveTo(0, corr.topY);
-      ctx.lineTo(width, corr.topY);
-      ctx.stroke();
+        // Round Badge
+        ctx.font = "bold 9px system-ui, sans-serif";
+        ctx.fillStyle = "#64748B";
+        ctx.textAlign = "center";
+        ctx.fillText(`R${c.roundNumber}`, candleX + 16, arenaCenterY + 70);
+      });
 
-      ctx.beginPath();
-      ctx.moveTo(0, corr.bottomY);
-      ctx.lineTo(width, corr.bottomY);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      // Render Active Live Forming Candle (Round in progress)
+      if (gameState === "playing") {
+        const activeCandleX = 190 + resolvedCandles.length * 85;
+        const currP = currentPriceRef.current;
+        const openP = roundOpenPriceRef.current;
+        const deltaPct = openP > 0 ? ((currP - openP) / openP) * 100 : 0;
 
-      // Real-time Pyth Price Path Curve (Historical samples ribbon)
-      const samples = priceHistoryBufferRef.current;
-      if (samples.length > 2) {
-        ctx.strokeStyle = "rgba(16, 185, 129, 0.65)";
+        const isGreen = deltaPct >= 0;
+        const activeColor = isGreen ? "#10B981" : "#EF4444";
+
+        const dynamicH = Math.max(8, Math.min(100, Math.abs(deltaPct) * 550));
+        const candleY = isGreen ? arenaCenterY - dynamicH : arenaCenterY;
+
+        // Live Wick
+        ctx.strokeStyle = activeColor;
         ctx.lineWidth = 2.5;
         ctx.beginPath();
-        ctx.moveTo(samples[0].x, samples[0].y);
-        for (let i = 1; i < samples.length; i++) {
-          ctx.lineTo(samples[i].x, samples[i].y);
-        }
-        ctx.stroke();
-      }
-
-      // Live Pyth Price Indicator Pin on Corridor
-      ctx.fillStyle = "#10B981";
-      ctx.beginPath();
-      ctx.arc(width - 24, corr.smoothedY, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Live Corridor Header Label
-      ctx.font = "bold 10px system-ui, -apple-system, sans-serif";
-      ctx.fillStyle = "#059669";
-      ctx.textAlign = "start";
-      ctx.fillText(`⚡ PYTH LIVE PREDICTION CHANNEL • SURF TO CHARGE 5X`, 140, corr.topY + 16);
-
-      // Render Exhaust Particles
-      particlesRef.current.forEach((p) => {
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = p.alpha;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fill();
-      });
-      ctx.globalAlpha = 1.0;
-
-      // Render Rockets (Apple Clean Vector Style)
-      const renderAppleRocket = (r: RocketState, x: number) => {
-        ctx.save();
-        ctx.translate(x, r.y);
-        ctx.rotate((r.tilt * Math.PI) / 180);
-
-        // Ambient Soft Shadow under rocket
-        ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
-        ctx.beginPath();
-        ctx.ellipse(0, 18, 16, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Locked-in Aura Glow when inside corridor
-        if (r.inCorridor) {
-          ctx.strokeStyle = "rgba(16, 185, 129, 0.35)";
-          ctx.lineWidth = 4;
-          ctx.beginPath();
-          ctx.ellipse(0, 0, 26, 16, 0, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        // Rocket Main Fuselage
-        ctx.fillStyle = r.color;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 20, 11, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
-        ctx.lineWidth = 1;
+        ctx.moveTo(activeCandleX + 22, arenaCenterY - (dynamicH + 18));
+        ctx.lineTo(activeCandleX + 22, arenaCenterY + (dynamicH + 18));
         ctx.stroke();
 
-        // Rocket Nosecone (Crisp White with subtle hairline)
+        // Glowing Live Candle Body
+        ctx.fillStyle = activeColor;
+        ctx.beginPath();
+        ctx.roundRect(activeCandleX, candleY, 44, dynamicH, 6);
+        ctx.fill();
+
+        // Live Pulse Pin
         ctx.fillStyle = "#FFFFFF";
         ctx.beginPath();
-        ctx.moveTo(14, -7);
-        ctx.lineTo(24, 0);
-        ctx.lineTo(14, 7);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-        ctx.stroke();
-
-        // Cockpit Window & Avatar
-        ctx.fillStyle = "#FFFFFF";
-        ctx.beginPath();
-        ctx.arc(2, 0, 7.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
-        ctx.stroke();
-
-        ctx.font = "11px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(r.avatar, 2, 4);
-
-        // Rocket Fins
-        ctx.fillStyle = r.accentColor;
-        ctx.beginPath();
-        ctx.moveTo(-14, -8);
-        ctx.lineTo(-22, -14);
-        ctx.lineTo(-15, -2);
-        ctx.closePath();
+        ctx.arc(activeCandleX + 22, isGreen ? candleY : candleY + dynamicH, 4, 0, Math.PI * 2);
         ctx.fill();
 
+        // Live Price Tag floating on active candle
+        ctx.fillStyle = activeColor;
         ctx.beginPath();
-        ctx.moveTo(-14, 8);
-        ctx.lineTo(-22, 14);
-        ctx.lineTo(-15, 2);
-        ctx.closePath();
-        ctx.fill();
-
-        // Multiplier Pill Badge above rocket
-        ctx.fillStyle = r.inCorridor ? "#10B981" : "#F59E0B";
-        ctx.beginPath();
-        ctx.roundRect(-24, -28, 48, 16, 8);
+        ctx.roundRect(activeCandleX - 24, isGreen ? candleY - 26 : candleY + dynamicH + 10, 92, 18, 5);
         ctx.fill();
 
         ctx.font = "bold 9px monospace";
         ctx.fillStyle = "#FFFFFF";
-        ctx.fillText(`${r.multiplier.toFixed(1)}x`, 0, -17);
-
-        ctx.restore();
-      };
-
-      renderAppleRocket(p1Ref.current, width * 0.28);
-      renderAppleRocket(p2Ref.current, width * 0.44);
+        ctx.textAlign = "center";
+        ctx.fillText(
+          `${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(3)}%`,
+          activeCandleX + 22,
+          isGreen ? candleY - 14 : candleY + dynamicH + 22
+        );
+      }
 
       animFrameId.current = requestAnimationFrame(render);
     };
 
     animFrameId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameId.current);
-  }, [gameState, gameMode, selectedAsset]);
-
-  // Touch & Pointer handlers for P1
-  const handleP1PointerDown = () => {
-    if (gameState !== "playing") return;
-    p1Ref.current.thrusting = true;
-    soundEngine.startThrust(true);
-  };
-
-  const handleP1PointerUp = () => {
-    p1Ref.current.thrusting = false;
-    soundEngine.stopThrust();
-  };
-
-  // Touch & Pointer handlers for P2
-  const handleP2PointerDown = () => {
-    if (gameState !== "playing" || gameMode !== "versus") return;
-    p2Ref.current.thrusting = true;
-    soundEngine.startThrust(false);
-  };
-
-  const handleP2PointerUp = () => {
-    if (gameMode !== "versus") return;
-    p2Ref.current.thrusting = false;
-    soundEngine.stopThrust();
-  };
+  }, [gameState, currentRound, p1Score, p2Score, resolvedCandles, selectedAsset]);
 
   const totalPot = (stakeMon * 2).toFixed(2);
   const netPayout = (stakeMon * 2 * 0.95).toFixed(4);
-
-  // Price delta helper
-  const priceDelta = strikePrice > 0 ? currentPrice - strikePrice : 0;
-  const priceDeltaPercent = strikePrice > 0 ? (priceDelta / strikePrice) * 100 : 0;
 
   return (
     <div className="flex flex-col items-center w-full max-w-5xl mx-auto px-4 py-6 font-sans select-none text-slate-900">
@@ -666,7 +519,7 @@ export function RocketClashGame() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-black/[0.06] shadow-sm text-xs font-medium text-slate-700">
             <Radio className={`w-3.5 h-3.5 ${isLive ? "text-emerald-500 animate-pulse" : "text-amber-500"}`} />
-            <span>Pyth Live Feed</span>
+            <span>Pyth Hermes Oracle</span>
           </div>
 
           <button
@@ -686,31 +539,28 @@ export function RocketClashGame() {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-900 text-base">{selectedAsset}/USD</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
-                Strike: ${strikePrice.toFixed(selectedAsset === "BTC" ? 1 : 2)}
+              <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-[#6E4EF4] font-semibold font-mono">
+                Round {currentRound} of 4
               </span>
             </div>
             <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-              <span>Now: ${currentPrice.toFixed(selectedAsset === "BTC" ? 1 : 2)}</span>
-              <span
-                className={`font-mono font-bold flex items-center gap-0.5 ${
-                  priceDeltaPercent >= 0 ? "text-emerald-600" : "text-rose-600"
-                }`}
-              >
-                {priceDeltaPercent >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {priceDeltaPercent >= 0 ? "+" : ""}
-                {priceDeltaPercent.toFixed(3)}%
-              </span>
+              <span>Current Price: ${currentPrice.toFixed(selectedAsset === "BTC" ? 1 : 2)}</span>
             </div>
           </div>
         </div>
 
-        {/* Live Oracle Wave Status */}
-        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
-          <Activity className="w-4 h-4 text-emerald-600" />
-          <div>
-            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Oracle Trajectory</div>
-            <div className="text-xs font-bold text-slate-800 font-mono">Real-Time Pyth Tracking</div>
+        {/* Live Scoreboard */}
+        <div className="flex items-center gap-4 px-5 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
+          <div className="text-center">
+            <div className="text-[10px] font-semibold text-slate-400 uppercase">You (P1)</div>
+            <div className="text-base font-black text-[#6E4EF4] font-mono">{p1Score} WINS</div>
+          </div>
+          <div className="text-xs font-bold text-slate-300">VS</div>
+          <div className="text-center">
+            <div className="text-[10px] font-semibold text-slate-400 uppercase">
+              {gameMode === "solo" ? "MemeBot AI" : "Rival"}
+            </div>
+            <div className="text-base font-black text-slate-800 font-mono">{p2Score} WINS</div>
           </div>
         </div>
 
@@ -726,103 +576,40 @@ export function RocketClashGame() {
         </div>
       </div>
 
-      {/* 3. Live HUD Multipliers (Apple Clean Design) */}
-      <div className="w-full grid grid-cols-2 gap-3 mb-3">
-        {/* P1 Player HUD */}
-        <div
-          className={`p-3.5 rounded-2xl bg-white border transition-all ${
-            p1Telemetry.inZone
-              ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm"
-              : "border-black/[0.06]"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-xl">🟣</span>
-              <div>
-                <div className="text-xs font-bold text-slate-900">Gmonad Alpha (You)</div>
-                <div className="text-[11px] text-slate-500 font-mono">
-                  {p1Telemetry.inZone ? "LOCKED IN CORRIDOR ⚡" : "OUTSIDE CHANNEL"}
-                </div>
-              </div>
-            </div>
-            <div className="text-right">
-              <div
-                className={`text-xl font-black font-mono tracking-tight ${
-                  p1Telemetry.inZone ? "text-emerald-600" : "text-slate-700"
-                }`}
-              >
-                {p1Telemetry.mult}x
-              </div>
-              <div className="text-[10px] font-mono text-slate-400">Score: {p1Telemetry.score}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* P2 Rival HUD */}
-        <div
-          className={`p-3.5 rounded-2xl bg-white border transition-all ${
-            p2Telemetry.inZone
-              ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm"
-              : "border-black/[0.06]"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-xl">{gameMode === "solo" ? "🤖" : "🐸"}</span>
-              <div>
-                <div className="text-xs font-bold text-slate-900">
-                  {gameMode === "solo" ? "MemeBot AI" : "Rival Challenger"}
-                </div>
-                <div className="text-[11px] text-slate-500 font-mono">
-                  {p2Telemetry.inZone ? "LOCKED IN CORRIDOR ⚡" : "OUTSIDE CHANNEL"}
-                </div>
-              </div>
-            </div>
-            <div className="text-right">
-              <div
-                className={`text-xl font-black font-mono tracking-tight ${
-                  p2Telemetry.inZone ? "text-emerald-600" : "text-slate-700"
-                }`}
-              >
-                {p2Telemetry.mult}x
-              </div>
-              <div className="text-[10px] font-mono text-slate-400">Score: {p2Telemetry.score}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 4. Canvas Arena */}
+      {/* 3. Canvas Candlestick Arena */}
       <div className="relative w-full rounded-2xl overflow-hidden border border-black/[0.08] shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white">
         <canvas
           ref={canvasRef}
           width={880}
-          height={480}
+          height={420}
           className="w-full h-auto block touch-none"
         />
 
-        {/* Live Timer Pill */}
+        {/* Live Round Timer Pill */}
         {gameState === "playing" && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-white/95 border border-black/[0.08] shadow-sm flex items-center gap-2 text-xs font-bold text-slate-800 font-mono">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            <span>Time Left: {timeLeft}s</span>
+            <Clock className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            <span>
+              {roundPhase === "LOCK_IN"
+                ? `LOCK CALL: ${roundTimeLeft}s`
+                : `RESOLVING CANDLE: ${roundTimeLeft}s`}
+            </span>
           </div>
         )}
 
-        {/* Pre-Round Launch Overlay */}
+        {/* Pre-Match Overlay */}
         {gameState === "idle" && (
           <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
             <div className="w-14 h-14 rounded-2xl bg-[#6E4EF4]/10 text-[#6E4EF4] flex items-center justify-center mb-3">
-              <Flame className="w-7 h-7" />
+              <Sparkles className="w-7 h-7" />
             </div>
 
             <h2 className="text-2xl font-bold text-slate-900 mb-1.5">
-              Rocket Clash: Surf the Pyth Channel
+              Round-by-Round Blitz: 4-Candle Showdown
             </h2>
 
             <p className="text-xs text-slate-500 max-w-md mb-6 leading-relaxed">
-              Pilot your rocket inside the real-time Pyth price corridor. Charge up to 5x multipliers by holding the line!
+              4 mini-rounds of 5 seconds each. In each round, predict whether the Pyth candle closes SUBE or BAJA. Whoever wins more rounds takes the pot!
             </p>
 
             <div className="flex items-center gap-2 mb-6 bg-slate-100 p-1.5 rounded-2xl">
@@ -835,7 +622,7 @@ export function RocketClashGame() {
                 }`}
               >
                 <User className="w-3.5 h-3.5" />
-                Solo vs AI
+                Solo vs MemeBot AI
               </button>
               <button
                 onClick={() => setGameMode("versus")}
@@ -846,7 +633,7 @@ export function RocketClashGame() {
                 }`}
               >
                 <Users className="w-3.5 h-3.5" />
-                1v1 Split
+                1v1 Duel
               </button>
             </div>
 
@@ -868,10 +655,10 @@ export function RocketClashGame() {
             </div>
 
             <button
-              onClick={startGame}
+              onClick={startMatch}
               className="px-8 py-3 rounded-2xl bg-[#6E4EF4] text-white font-semibold text-sm hover:bg-[#5b3ce0] active:scale-95 transition-all shadow-md shadow-purple-600/20"
             >
-              Start Duel (0.25 MON)
+              Start 4-Candle Blitz (0.25 MON)
             </button>
           </div>
         )}
@@ -884,7 +671,7 @@ export function RocketClashGame() {
             </div>
 
             <h3 className="text-2xl font-bold text-slate-900 mb-1">
-              {winner === "P1" ? "Victory! You Held the Line 🏆" : winner === "P2" ? "Rival Won the Clash 🤖" : "Dead Heat Tie ⚖️"}
+              {matchWinner === "P1" ? "Victory! You Out-Predicted the Rival 🏆" : matchWinner === "P2" ? "Rival Won the Blitz 🤖" : "Dead Heat Tie ⚖️"}
             </h3>
 
             <p className="text-xs text-slate-500 mb-5 font-mono">
@@ -892,23 +679,21 @@ export function RocketClashGame() {
             </p>
 
             <div className="grid grid-cols-2 gap-4 w-full max-w-xs mb-6">
-              <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.06] text-center">
-                <div className="text-[10px] text-slate-400 font-mono">P1 SCORE (x{p1Ref.current.multiplier.toFixed(1)})</div>
-                <div className="text-lg font-bold text-slate-900 font-mono">
-                  {Math.floor(p1Ref.current.score * p1Ref.current.multiplier)}
-                </div>
+              <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 text-center">
+                <div className="text-[10px] text-purple-600 font-semibold uppercase">YOU (P1)</div>
+                <div className="text-2xl font-black text-[#6E4EF4] font-mono">{p1Score} WINS</div>
               </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.06] text-center">
-                <div className="text-[10px] text-slate-400 font-mono">P2 SCORE (x{p2Ref.current.multiplier.toFixed(1)})</div>
-                <div className="text-lg font-bold text-slate-900 font-mono">
-                  {Math.floor(p2Ref.current.score * p2Ref.current.multiplier)}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-center">
+                <div className="text-[10px] text-slate-500 font-semibold uppercase">
+                  {gameMode === "solo" ? "MEMEBOT AI" : "RIVAL"}
                 </div>
+                <div className="text-2xl font-black text-slate-800 font-mono">{p2Score} WINS</div>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
               <button
-                onClick={startGame}
+                onClick={startMatch}
                 className="px-6 py-2.5 rounded-xl bg-[#6E4EF4] text-white font-semibold text-sm hover:bg-[#5b3ce0] active:scale-95 transition-all shadow-md flex items-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -925,95 +710,181 @@ export function RocketClashGame() {
         )}
       </div>
 
-      {/* 5. Direct Tactile Controls (Apple Native Style) */}
-      <div className="w-full mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* P1 Controls Button */}
-        <button
-          onPointerDown={handleP1PointerDown}
-          onPointerUp={handleP1PointerUp}
-          onPointerLeave={handleP1PointerUp}
-          onPointerCancel={handleP1PointerUp}
-          className="p-4 sm:p-5 rounded-2xl bg-white border border-black/[0.08] hover:border-[#6E4EF4] active:scale-[0.98] transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-[#6E4EF4]/10 text-xl flex items-center justify-center">
-              🟣
-            </div>
-            <div className="text-left">
-              <div className="text-xs font-bold text-slate-900">P1 • Hold to Fire Thrusters</div>
-              <div className="text-xs text-slate-500 font-mono mt-0.5">HOLD [SPACE] / [W] OR TAP</div>
-            </div>
+      {/* 4. Active Lock-In Prediction Buttons (Apple Design Touch Controls) */}
+      <div className="w-full mt-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between px-1">
+          <div className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <Zap className="w-4 h-4 text-[#6E4EF4]" />
+            <span>Round {currentRound} Prediction Call (Hotkeys: [A / ←] SUBE • [D / →] BAJA)</span>
           </div>
-          <Flame className="w-6 h-6 text-[#6E4EF4] group-active:scale-125 transition-transform" />
-        </button>
+          <div className="text-xs font-mono text-slate-500">
+            {roundPhase === "LOCK_IN" ? (
+              <span className="text-[#6E4EF4] font-bold animate-pulse">LOCKING IN ACTIVE...</span>
+            ) : (
+              <span className="text-emerald-600 font-bold">LOCKED & RESOLVING</span>
+            )}
+          </div>
+        </div>
 
-        {/* P2 Controls Button */}
-        {gameMode === "versus" ? (
+        <div className="grid grid-cols-2 gap-3">
+          {/* SUBE BUTTON */}
           <button
-            onPointerDown={handleP2PointerDown}
-            onPointerUp={handleP2PointerUp}
-            onPointerLeave={handleP2PointerUp}
-            onPointerCancel={handleP2PointerUp}
-            className="p-4 sm:p-5 rounded-2xl bg-white border border-black/[0.08] hover:border-emerald-500 active:scale-[0.98] transition-all flex items-center justify-between shadow-sm cursor-pointer touch-none"
+            onClick={() => handleP1Call("UP")}
+            disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
+            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
+              p1Call === "UP"
+                ? "bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/20 shadow-sm"
+                : "bg-white border-black/[0.08] hover:border-black/[0.15]"
+            }`}
           >
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-emerald-50 text-xl flex items-center justify-center">
-                🐸
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
+                  p1Call === "UP" ? "bg-emerald-600 text-white shadow-sm" : "bg-emerald-50 text-emerald-600"
+                }`}
+              >
+                🟢
               </div>
               <div className="text-left">
-                <div className="text-xs font-bold text-slate-900">P2 • Hold to Fire Thrusters</div>
-                <div className="text-xs text-slate-500 font-mono mt-0.5">HOLD [ARROW UP]</div>
+                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>SUBE (HIGHER)</span>
+                  {p1Call === "UP" && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
+                      LOCKED
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 font-mono mt-0.5">
+                  Candle closes above Open
+                </div>
               </div>
             </div>
-            <Flame className="w-6 h-6 text-emerald-600 group-active:scale-125 transition-transform" />
+
+            <ArrowUpRight
+              className={`w-6 h-6 transition-transform ${
+                p1Call === "UP" ? "text-emerald-600 scale-125" : "text-slate-400"
+              }`}
+            />
           </button>
-        ) : (
-          <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
+
+          {/* BAJA BUTTON */}
+          <button
+            onClick={() => handleP1Call("DOWN")}
+            disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
+            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
+              p1Call === "DOWN"
+                ? "bg-rose-500/15 border-rose-500 ring-2 ring-rose-500/20 shadow-sm"
+                : "bg-white border-black/[0.08] hover:border-black/[0.15]"
+            }`}
+          >
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-slate-200 flex items-center justify-center text-xl">
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
+                  p1Call === "DOWN" ? "bg-rose-600 text-white shadow-sm" : "bg-rose-50 text-rose-600"
+                }`}
+              >
+                🔴
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>BAJA (LOWER)</span>
+                  {p1Call === "DOWN" && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-semibold">
+                      LOCKED
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 font-mono mt-0.5">
+                  Candle closes below Open
+                </div>
+              </div>
+            </div>
+
+            <ArrowDownRight
+              className={`w-6 h-6 transition-transform ${
+                p1Call === "DOWN" ? "text-rose-600 scale-125" : "text-slate-400"
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Rival Call Status Indicator */}
+        {gameMode === "solo" ? (
+          <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center text-base">
                 🤖
               </div>
-              <div>
-                <div className="text-xs font-bold text-slate-900">MemeBot AI Rival</div>
-                <div className="text-xs text-slate-500 font-mono">Auto-tracking Pyth target channel</div>
+              <div className="text-xs">
+                <span className="font-bold text-slate-900">MemeBot AI Prediction: </span>
+                {p2Call ? (
+                  <span
+                    className={`font-mono font-bold px-2 py-0.5 rounded ${
+                      p2Call === "UP" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                    }`}
+                  >
+                    {p2Call === "UP" ? "🟢 SUBE (HIGHER)" : "🔴 BAJA (LOWER)"}
+                  </span>
+                ) : (
+                  <span className="text-slate-400 italic">Thinking...</span>
+                )}
               </div>
             </div>
-            <div className="text-[10px] font-mono px-2 py-1 rounded bg-slate-200 text-slate-700 font-semibold">
-              BOT ACTIVE
-            </div>
+            <div className="text-xs font-mono text-slate-500 italic">&quot;{aiThought}&quot;</div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 mt-1">
+            <button
+              onClick={() => handleP2Call("UP")}
+              disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
+              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                p2Call === "UP" ? "bg-emerald-600 text-white" : "bg-white border-black/[0.08] text-slate-600"
+              }`}
+            >
+              <span>P2: SUBE [↑]</span>
+            </button>
+            <button
+              onClick={() => handleP2Call("DOWN")}
+              disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
+              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                p2Call === "DOWN" ? "bg-rose-600 text-white" : "bg-white border-black/[0.08] text-slate-600"
+              }`}
+            >
+              <span>P2: BAJA [↓]</span>
+            </button>
           </div>
         )}
       </div>
 
-      {/* 6. Apple Design Economics & Mechanics Cards */}
+      {/* 5. Apple Design System Rules & Economics Cards */}
       <div className="w-full mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Zap className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            Real Pyth Oracle Dynamic
+            4 Asaltos de 5 Segundos
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            The target corridor directly maps to real-time Pyth price movements. When the market rallies, the channel climbs; when it dumps, it descends.
+            La partida dura 20s en total. En cada asalto tienes 2s para fijar tu predicción y 3s para ver la vela cerrarse.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Gauge className="w-3.5 h-3.5 text-emerald-600" />
-            Precision Multiplier (1x to 5x)
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            100% Habilidad de Predicción
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Piloting inside the channel builds your score multiplier up to 5x. Staying outside causes the multiplier to cool down.
+            Cero físicas flotantes de dedos. Gana quien mejor lea el gráfico y acierte la dirección del precio en tiempo real.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Percent className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            5.0% Protocol Rake
+            5.0% Protocol Rake Garantizado
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            0.50 MON total pot. 0.025 MON goes to the Duelio Treasury on every match. Zero insolvency risk for the house.
+            Pozo P2P de 0.50 MON. 0.025 MON fijo a la tesorería de Duelio. La casa nunca arriesga capital propio.
           </p>
         </div>
       </div>
