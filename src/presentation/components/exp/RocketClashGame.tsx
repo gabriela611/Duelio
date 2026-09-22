@@ -16,35 +16,20 @@ import {
   Percent,
   CheckCircle2,
   Clock,
-  ArrowUpRight,
-  ArrowDownRight,
   Sparkles,
   Flame,
   Activity,
-  Gauge,
-  Rocket,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
-type PredictionCall = "UP" | "DOWN" | null;
-type RoundPhase = "LOCK_IN" | "RESOLVING" | "ROUND_RESULT";
-
-interface ResolvedCandle {
-  roundNumber: number;
-  openPrice: number;
-  closePrice: number;
-  highPrice: number;
-  lowPrice: number;
-  winnerCall: "UP" | "DOWN" | "DRAW";
-  p1Call: PredictionCall;
-  p2Call: PredictionCall;
-  p1Won: boolean;
-  p2Won: boolean;
-  p1UsedNitro?: boolean;
-  p2UsedNitro?: boolean;
+interface TrajectoryPoint {
+  x: number;
+  y: number;
 }
 
 interface Particle {
@@ -56,16 +41,17 @@ interface Particle {
   maxLife: number;
   color: string;
   size: number;
-  isSmoke?: boolean;
 }
 
-interface Shockwave {
-  x: number;
-  y: number;
-  radius: number;
-  maxRadius: number;
-  alpha: number;
-  color: string;
+interface ResolvedRound {
+  roundNumber: number;
+  openPrice: number;
+  closePrice: number;
+  marketOutcome: "UP" | "DOWN" | "DRAW";
+  p1FinalZone: "UP" | "DOWN";
+  p2FinalZone: "UP" | "DOWN";
+  p1Won: boolean;
+  p2Won: boolean;
 }
 
 export function RocketClashGame() {
@@ -83,161 +69,132 @@ export function RocketClashGame() {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [matchWinner, setMatchWinner] = useState<"P1" | "P2" | "DRAW" | null>(null);
 
-  // 4-Candle Blitz State
+  // 4-Round Match State (5s per round = 20s match)
   const [currentRound, setCurrentRound] = useState<number>(1);
-  const [roundPhase, setRoundPhase] = useState<RoundPhase>("LOCK_IN");
   const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5.0);
   const [p1Score, setP1Score] = useState<number>(0);
   const [p2Score, setP2Score] = useState<number>(0);
+  const [resolvedRounds, setResolvedRounds] = useState<ResolvedRound[]>([]);
 
-  // Gamification Mechanics: Nitro & Streaks
-  const [p1NitroAvailable, setP1NitroAvailable] = useState<boolean>(true);
-  const [p1NitroActive, setP1NitroActive] = useState<boolean>(false);
-  const [p2NitroAvailable, setP2NitroAvailable] = useState<boolean>(true);
-  const [p2NitroActive, setP2NitroActive] = useState<boolean>(false);
-  const [p1Streak, setP1Streak] = useState<number>(0);
-  const [p2Streak, setP2Streak] = useState<number>(0);
+  // Telemetry HUD state
+  const [p1CurrentZone, setP1CurrentZone] = useState<"UP" | "DOWN">("UP");
+  const [p2CurrentZone, setP2CurrentZone] = useState<"UP" | "DOWN">("DOWN");
+  const [currentDeltaPct, setCurrentDeltaPct] = useState<number>(0);
+  const [aiThought, setAiThought] = useState<string>("Reading market tape... 📊");
 
-  // Real-time telemetry states for UI HUD
-  const [p1ThrustPercent, setP1ThrustPercent] = useState<number>(0);
-  const [p2ThrustPercent, setP2ThrustPercent] = useState<number>(0);
-  const [tugOfWarAdvantage, setTugOfWarAdvantage] = useState<number>(0);
-  const [isPhotoFinishTension, setIsPhotoFinishTension] = useState<boolean>(false);
-
-  // Player predictions for current round
-  const [p1Call, setP1Call] = useState<PredictionCall>(null);
-  const [p2Call, setP2Call] = useState<PredictionCall>(null);
-  const [aiThought, setAiThought] = useState<string>("Analyzing price momentum... 📊");
-
-  // Round candle prices
+  // Round prices
   const roundOpenPriceRef = useRef<number>(currentPrice);
-  const roundHighPriceRef = useRef<number>(currentPrice);
-  const roundLowPriceRef = useRef<number>(currentPrice);
   const currentPriceRef = useRef<number>(currentPrice);
   const [, setRoundOpenPrice] = useState<number>(currentPrice);
 
   useEffect(() => {
     currentPriceRef.current = currentPrice;
-    if (gameState === "playing" && roundPhase === "RESOLVING") {
-      roundHighPriceRef.current = Math.max(roundHighPriceRef.current, currentPrice);
-      roundLowPriceRef.current = Math.min(roundLowPriceRef.current, currentPrice);
+    if (gameState === "playing") {
+      const openP = roundOpenPriceRef.current;
+      if (openP > 0) {
+        const delta = ((currentPrice - openP) / openP) * 100;
+        setCurrentDeltaPct(delta);
+      }
     }
-  }, [currentPrice, gameState, roundPhase]);
-
-  // History of completed rounds
-  const [resolvedCandles, setResolvedCandles] = useState<ResolvedCandle[]>([]);
+  }, [currentPrice, gameState]);
 
   // Physics & Animation refs
   const animFrameId = useRef<number>(0);
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const p1CallRef = useRef<PredictionCall>(null);
-  const p2CallRef = useRef<PredictionCall>(null);
-  const p1NitroActiveRef = useRef<boolean>(false);
-  const p2NitroActiveRef = useRef<boolean>(false);
-
-  // Tug-of-War dynamic coordinates & particle systems
-  const p1PhysicsX = useRef<number>(260);
-  const p2PhysicsX = useRef<number>(260);
-  const particlesRef = useRef<Particle[]>([]);
-  const shockwavesRef = useRef<Shockwave[]>([]);
   const screenShakeRef = useRef<number>(0);
-  const heartbeatTriggeredRef = useRef<boolean>(false);
-  const speedLinesRef = useRef<Array<{ x: number; y: number; length: number; speed: number }>>([]);
 
-  // Initialize speed lines for the drag strip
-  useEffect(() => {
-    const lines = [];
-    for (let i = 0; i < 28; i++) {
-      lines.push({
-        x: Math.random() * 880,
-        y: 245 + Math.random() * 155,
-        length: 20 + Math.random() * 50,
-        speed: 8 + Math.random() * 14,
-      });
-    }
-    speedLinesRef.current = lines;
-  }, []);
+  // Physical Rocket States (Hold-to-Thrust physics as in cc62825)
+  const p1Ref = useRef({
+    x: 140,
+    y: 210,
+    vy: 0,
+    thrusting: false,
+    tilt: 0,
+    flameColor: "#6E4EF4",
+  });
 
-  // Audio toggle
+  const p2Ref = useRef({
+    x: 140,
+    y: 210,
+    vy: 0,
+    thrusting: false,
+    tilt: 0,
+    flameColor: "#10B981",
+  });
+
+  // Trajectory history for drawing arrows
+  const p1TrailRef = useRef<TrajectoryPoint[]>([]);
+  const p2TrailRef = useRef<TrajectoryPoint[]>([]);
+  const pythTrailRef = useRef<TrajectoryPoint[]>([]);
+  const particlesRef = useRef<Particle[]>([]);
+
+  // Sound toggle
   const toggleSound = () => {
     const next = !isMuted;
     setIsMuted(next);
     soundEngine.setMuted(next);
   };
 
-  // Lock P1 Prediction Call
-  const handleP1Call = useCallback((call: "UP" | "DOWN") => {
-    if (gameState !== "playing" || roundPhase !== "LOCK_IN") return;
-    setP1Call(call);
-    p1CallRef.current = call;
-    soundEngine.playLockSound();
-  }, [gameState, roundPhase]);
-
-  // Toggle P1 Nitro Boost
-  const handleToggleP1Nitro = useCallback(() => {
-    if (gameState !== "playing" || roundPhase !== "LOCK_IN" || !p1NitroAvailable) return;
-    const nextState = !p1NitroActive;
-    setP1NitroActive(nextState);
-    p1NitroActiveRef.current = nextState;
-    if (nextState) {
-      soundEngine.playScorePing();
-    }
-  }, [gameState, roundPhase, p1NitroAvailable, p1NitroActive]);
-
-  // Lock P2 Prediction Call (Versus mode)
-  const handleP2Call = useCallback((call: "UP" | "DOWN") => {
-    if (gameState !== "playing" || roundPhase !== "LOCK_IN" || gameMode !== "versus") return;
-    setP2Call(call);
-    p2CallRef.current = call;
-    soundEngine.playLockSound();
-  }, [gameState, roundPhase, gameMode]);
-
-  // Keyboard hotkeys
+  // Keyboard controls: Hold to thrust UP, release to drop DOWN
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "KeyA" || e.code === "ArrowLeft") {
+      if (e.code === "Space" || e.code === "KeyW" || e.code === "ArrowUp") {
         e.preventDefault();
-        handleP1Call("UP");
-      } else if (e.code === "KeyD" || e.code === "ArrowRight") {
+        if (gameState === "playing" && !p1Ref.current.thrusting) {
+          p1Ref.current.thrusting = true;
+          soundEngine.startThrust(true);
+        }
+      }
+      if (e.code === "ArrowDown" || e.code === "KeyS") {
         e.preventDefault();
-        handleP1Call("DOWN");
-      } else if (e.code === "KeyW" || e.code === "Space") {
-        e.preventDefault();
-        handleToggleP1Nitro();
+        if (gameState === "playing") {
+          p1Ref.current.thrusting = false;
+          soundEngine.stopThrust();
+        }
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleP1Call, handleToggleP1Nitro]);
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "KeyW" || e.code === "ArrowUp") {
+        e.preventDefault();
+        if (p1Ref.current.thrusting) {
+          p1Ref.current.thrusting = false;
+          soundEngine.stopThrust();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { passive: false });
+    window.addEventListener("keyup", handleKeyUp, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [gameState]);
+
+  // Touch & Pointer controls for mobile & mouse
+  const handleP1ThrustStart = () => {
+    if (gameState !== "playing") return;
+    p1Ref.current.thrusting = true;
+    soundEngine.startThrust(true);
+  };
+
+  const handleP1ThrustEnd = () => {
+    p1Ref.current.thrusting = false;
+    soundEngine.stopThrust();
+  };
 
   // Start 4-Round Blitz Match
   const startMatch = useCallback(() => {
     setMatchWinner(null);
     setGameState("countdown");
-    setResolvedCandles([]);
+    setResolvedRounds([]);
     setCurrentRound(1);
     setP1Score(0);
     setP2Score(0);
-    setP1Call(null);
-    setP2Call(null);
-    p1CallRef.current = null;
-    p2CallRef.current = null;
-    p1PhysicsX.current = 260;
-    p2PhysicsX.current = 260;
     particlesRef.current = [];
-    shockwavesRef.current = [];
     screenShakeRef.current = 0;
-    setP1NitroAvailable(true);
-    setP1NitroActive(false);
-    p1NitroActiveRef.current = false;
-    setP2NitroAvailable(true);
-    setP2NitroActive(false);
-    p2NitroActiveRef.current = false;
-    setP1Streak(0);
-    setP2Streak(0);
-    setIsPhotoFinishTension(false);
 
     let c = 3;
     soundEngine.playCountdownBeep(false);
@@ -249,68 +206,50 @@ export function RocketClashGame() {
       } else {
         clearInterval(countdownTimerRef.current!);
         soundEngine.playCountdownBeep(true);
-        startRoundCycle(1, 0, 0, 0, 0, true, true);
+        startRoundCycle(1, 0, 0);
       }
     }, 1000);
   }, []);
 
   // Execute 5-second Round Cycle
-  const startRoundCycle = (
-    roundNum: number,
-    currentP1Score: number,
-    currentP2Score: number,
-    currP1Streak: number,
-    currP2Streak: number,
-    p1HasNitro: boolean,
-    p2HasNitro: boolean
-  ) => {
+  const startRoundCycle = (roundNum: number, currentP1Score: number, currentP2Score: number) => {
     setGameState("playing");
     setCurrentRound(roundNum);
-    setRoundPhase("LOCK_IN");
-    setP1Call(null);
-    setP2Call(null);
-    p1CallRef.current = null;
-    p2CallRef.current = null;
-    setP1NitroActive(false);
-    p1NitroActiveRef.current = false;
-    setP2NitroActive(false);
-    p2NitroActiveRef.current = false;
-    heartbeatTriggeredRef.current = false;
-    setIsPhotoFinishTension(false);
     soundEngine.stopThrust();
 
     // Snapshot Open Price
     const openP = currentPriceRef.current;
     roundOpenPriceRef.current = openP;
-    roundHighPriceRef.current = openP;
-    roundLowPriceRef.current = openP;
     setRoundOpenPrice(openP);
 
-    // AI Prediction Decision in Solo mode (Locks around T=1.2s)
-    if (gameMode === "solo") {
-      setAiThought("Scanning order book micro-flow... 👀");
-      setTimeout(() => {
-        const aiPick: "UP" | "DOWN" = Math.random() > 0.48 ? "UP" : "DOWN";
-        setP2Call(aiPick);
-        p2CallRef.current = aiPick;
+    // Reset rocket positions and trails to starting gate
+    p1Ref.current.x = 140;
+    p1Ref.current.y = 210;
+    p1Ref.current.vy = 0;
+    p1Ref.current.thrusting = false;
+    p1Ref.current.tilt = 0;
 
-        // AI strategically uses Nitro on Round 3 or 4 if available
-        if (p2HasNitro && (roundNum >= 3 || Math.random() > 0.6)) {
-          setP2NitroActive(true);
-          p2NitroActiveRef.current = true;
-          setAiThought(
-            aiPick === "UP"
-              ? "ALL-IN NITRO ACTIVATED! SUBE 🟢⚡"
-              : "ALL-IN NITRO ACTIVATED! BAJA 🔴⚡"
-          );
-        } else {
-          setAiThought(
-            aiPick === "UP"
-              ? "Bullish volume spike! Locking SUBE 🟢"
-              : "Resistance wall hit! Locking BAJA 🔴"
-          );
-        }
-      }, 1200);
+    p2Ref.current.x = 140;
+    p2Ref.current.y = 210;
+    p2Ref.current.vy = 0;
+    p2Ref.current.thrusting = false;
+    p2Ref.current.tilt = 0;
+
+    p1TrailRef.current = [{ x: 140, y: 210 }];
+    p2TrailRef.current = [{ x: 140, y: 210 }];
+    pythTrailRef.current = [{ x: 140, y: 210 }];
+
+    // AI Prediction Decision in Solo mode
+    if (gameMode === "solo") {
+      setAiThought("Calibrating thruster trajectory... 👀");
+      const aiTargetUp = Math.random() > 0.48;
+      setTimeout(() => {
+        setAiThought(
+          aiTargetUp
+            ? "Momentum spike! Steering UP 🟢↗️"
+            : "Resistance wall! Steering DOWN 🔴↘️"
+        );
+      }, 1000);
     }
 
     // 5.0-second round clock
@@ -323,35 +262,20 @@ export function RocketClashGame() {
       const secLeft = Number((timeLeftMs / 1000).toFixed(1));
       setRoundTimeLeft(secLeft);
 
-      // At T = 3.0s (2 seconds elapsed), lock-in ends and Tug-of-War resolving begins
-      if (timeLeftMs <= 3000 && timeLeftMs > 2800) {
-        setRoundPhase("RESOLVING");
-        soundEngine.startThrust(true);
+      // AI Bot Thrust Logic: steers its rocket to target zone
+      if (gameMode === "solo") {
+        const p2 = p2Ref.current;
+        const currentDelta =
+          roundOpenPriceRef.current > 0
+            ? ((currentPriceRef.current - roundOpenPriceRef.current) / roundOpenPriceRef.current) * 100
+            : 0;
 
-        if (!p1CallRef.current) {
-          setP1Call("UP");
-          p1CallRef.current = "UP";
-        }
-        if (gameMode === "solo" && !p2CallRef.current) {
-          setP2Call("DOWN");
-          p2CallRef.current = "DOWN";
-        }
-      }
-
-      // Final 1.2s Photo-Finish heartbeat detection
-      if (timeLeftMs <= 1400 && timeLeftMs > 200) {
-        const openPNow = roundOpenPriceRef.current;
-        const currPNow = currentPriceRef.current;
-        const delta = openPNow > 0 ? Math.abs((currPNow - openPNow) / openPNow) * 100 : 0;
-        if (delta < 0.02) {
-          setIsPhotoFinishTension(true);
-          if (!heartbeatTriggeredRef.current) {
-            soundEngine.playHeartbeatThump();
-            heartbeatTriggeredRef.current = true;
-            screenShakeRef.current = 2.5;
-          }
-        } else {
-          setIsPhotoFinishTension(false);
+        // Bot reads trend with subtle jitter
+        const targetZoneY = currentDelta >= 0 ? 130 : 290;
+        if (p2.y > targetZoneY + 12) {
+          p2.thrusting = true;
+        } else if (p2.y < targetZoneY - 12) {
+          p2.thrusting = false;
         }
       }
 
@@ -359,122 +283,62 @@ export function RocketClashGame() {
       if (timeLeftMs <= 0) {
         clearInterval(roundTimerRef.current!);
         soundEngine.stopThrust();
-        resolveRound(
-          roundNum,
-          currentP1Score,
-          currentP2Score,
-          currP1Streak,
-          currP2Streak,
-          p1HasNitro,
-          p2HasNitro
-        );
+        resolveRound(roundNum, currentP1Score, currentP2Score);
       }
     }, intervalTime);
   };
 
-  // Evaluate Round Result
-  const resolveRound = (
-    roundNum: number,
-    currentP1Score: number,
-    currentP2Score: number,
-    currP1Streak: number,
-    currP2Streak: number,
-    p1HasNitro: boolean,
-    p2HasNitro: boolean
-  ) => {
-    setRoundPhase("ROUND_RESULT");
+  // Evaluate Round Result at 5s
+  const resolveRound = (roundNum: number, currentP1Score: number, currentP2Score: number) => {
     const openP = roundOpenPriceRef.current;
     const closeP = currentPriceRef.current;
-    const highP = roundHighPriceRef.current;
-    const lowP = roundLowPriceRef.current;
+    const baselineY = 210;
 
-    let winnerCall: "UP" | "DOWN" | "DRAW" = "DRAW";
-    if (closeP > openP) winnerCall = "UP";
-    else if (closeP < openP) winnerCall = "DOWN";
+    let marketOutcome: "UP" | "DOWN" | "DRAW" = "DRAW";
+    if (closeP > openP) marketOutcome = "UP";
+    else if (closeP < openP) marketOutcome = "DOWN";
 
-    const p1 = p1CallRef.current;
-    const p2 = p2CallRef.current;
-    const p1UsedNitro = p1NitroActiveRef.current;
-    const p2UsedNitro = p2NitroActiveRef.current;
+    // Did P1 arrow end up above or below the baseline?
+    const p1FinalZone: "UP" | "DOWN" = p1Ref.current.y < baselineY ? "UP" : "DOWN";
+    const p2FinalZone: "UP" | "DOWN" = p2Ref.current.y < baselineY ? "UP" : "DOWN";
 
-    const p1Won = p1 === winnerCall;
-    const p2Won = p2 === winnerCall;
+    const p1Won = marketOutcome !== "DRAW" && p1FinalZone === marketOutcome;
+    const p2Won = marketOutcome !== "DRAW" && p2FinalZone === marketOutcome;
 
     let newP1Score = currentP1Score;
     let newP2Score = currentP2Score;
-    let newP1Streak = currP1Streak;
-    let newP2Streak = currP2Streak;
 
-    // Evaluate P1 Points & Streaks
     if (p1Won) {
-      newP1Score += p1UsedNitro ? 2 : 1;
-      newP1Streak += 1;
+      newP1Score += 1;
       soundEngine.playRoundWinSound();
-      screenShakeRef.current = p1UsedNitro ? 6.0 : 4.0;
-
-      // Spawn sonic shockwave
-      shockwavesRef.current.push({
-        x: p1PhysicsX.current,
-        y: 275,
-        radius: 10,
-        maxRadius: 80,
-        alpha: 1,
-        color: p1UsedNitro ? "#F59E0B" : "#6E4EF4",
-      });
-    } else {
-      newP1Streak = 0;
+      screenShakeRef.current = 4.0;
     }
-
-    // Evaluate P2 Points & Streaks
     if (p2Won) {
-      newP2Score += p2UsedNitro ? 2 : 1;
-      newP2Streak += 1;
-    } else {
-      newP2Streak = 0;
+      newP2Score += 1;
     }
-
-    // Update state for Nitro consumption
-    const nextP1NitroAvailable = p1UsedNitro ? false : p1HasNitro;
-    const nextP2NitroAvailable = p2UsedNitro ? false : p2HasNitro;
-    setP1NitroAvailable(nextP1NitroAvailable);
-    setP2NitroAvailable(nextP2NitroAvailable);
 
     setP1Score(newP1Score);
     setP2Score(newP2Score);
-    setP1Streak(newP1Streak);
-    setP2Streak(newP2Streak);
 
-    const candleResult: ResolvedCandle = {
+    const roundResult: ResolvedRound = {
       roundNumber: roundNum,
       openPrice: openP,
       closePrice: closeP,
-      highPrice: highP,
-      lowPrice: lowP,
-      winnerCall,
-      p1Call: p1,
-      p2Call: p2,
+      marketOutcome,
+      p1FinalZone,
+      p2FinalZone,
       p1Won,
       p2Won,
-      p1UsedNitro,
-      p2UsedNitro,
     };
 
-    setResolvedCandles((prev) => [...prev, candleResult]);
+    setResolvedRounds((prev) => [...prev, roundResult]);
 
     // Check match completion after 4 rounds
     setTimeout(() => {
       if (roundNum >= 4) {
         finalizeMatch(newP1Score, newP2Score);
       } else {
-        startRoundCycle(
-          roundNum + 1,
-          newP1Score,
-          newP2Score,
-          newP1Streak,
-          newP2Streak,
-          nextP1NitroAvailable,
-          nextP2NitroAvailable
-        );
+        startRoundCycle(roundNum + 1, newP1Score, newP2Score);
       }
     }, 1600);
   };
@@ -491,7 +355,7 @@ export function RocketClashGame() {
           particleCount: 95,
           spread: 80,
           origin: { y: 0.6 },
-          colors: ["#6E4EF4", "#10B981", "#F59E0B"],
+          colors: ["#6E4EF4", "#10B981", "#3B82F6"],
         });
       } catch (_) {}
     } else if (finalP2 > finalP1) {
@@ -512,18 +376,24 @@ export function RocketClashGame() {
     };
   }, []);
 
-  // Main 60fps Canvas Loop: Tug-of-War Physics + Candlestick Engine
+  // Main 60fps Canvas Loop: Hold-to-Thrust Arrow Physics + Pyth Trajectory
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const render = () => {
+    let lastTime = performance.now();
+
+    const render = (time: number) => {
+      const dt = Math.min((time - lastTime) / 1000, 0.1);
+      lastTime = time;
+
       const width = canvas.width;
       const height = canvas.height;
+      const baselineY = height * 0.5; // 210px
 
-      // Handle screen micro-shake
+      // Screen shake
       let shakeOffsetX = 0;
       let shakeOffsetY = 0;
       if (screenShakeRef.current > 0.1) {
@@ -544,7 +414,7 @@ export function RocketClashGame() {
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // Subtle background grid
+      // Subtle background grid lines
       ctx.strokeStyle = "rgba(0, 0, 0, 0.035)";
       ctx.lineWidth = 1;
       for (let y = 30; y < height; y += 40) {
@@ -554,17 +424,8 @@ export function RocketClashGame() {
         ctx.stroke();
       }
 
-      // Photo-Finish Climax Vignette Pulse
-      if (isPhotoFinishTension) {
-        ctx.fillStyle = "rgba(245, 158, 11, 0.08)";
-        ctx.fillRect(0, 0, width, height);
-        ctx.strokeStyle = "rgba(245, 158, 11, 0.4)";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(2, 2, width - 4, height - 4);
-      }
-
-      // 2. CHECKPOINT MATCH TRACK (Top of Canvas)
-      const trackY = 46;
+      // 2. CHECKPOINT TRACK (Top of Canvas)
+      const trackY = 44;
       ctx.strokeStyle = "rgba(0, 0, 0, 0.06)";
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -588,16 +449,22 @@ export function RocketClashGame() {
         ctx.fillText(`R${i}`, nodeX, trackY - 12);
       }
 
-      // 3. CANDLESTICK STRIKE CORRIDOR (Upper Half: Y 65 -> 220)
-      const candleBaselineY = 145;
+      // 3. TARGET QUADRANTS (Upper: SUBE 🟢 / Lower: BAJA 🔴)
+      // Upper SUBE Tint
+      ctx.fillStyle = "rgba(16, 185, 129, 0.03)";
+      ctx.fillRect(30, 75, width - 60, baselineY - 75);
+
+      // Lower BAJA Tint
+      ctx.fillStyle = "rgba(239, 68, 68, 0.03)";
+      ctx.fillRect(30, baselineY, width - 60, height - 100);
 
       // Strike Price Reference Baseline
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 6]);
       ctx.beginPath();
-      ctx.moveTo(40, candleBaselineY);
-      ctx.lineTo(width - 40, candleBaselineY);
+      ctx.moveTo(30, baselineY);
+      ctx.lineTo(width - 30, baselineY);
       ctx.stroke();
       ctx.setLineDash([]);
 
@@ -606,7 +473,7 @@ export function RocketClashGame() {
       ctx.strokeStyle = "rgba(0, 0, 0, 0.08)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(40, candleBaselineY - 11, 110, 22, 5);
+      ctx.roundRect(30, baselineY - 11, 120, 22, 5);
       ctx.fill();
       ctx.stroke();
 
@@ -615,269 +482,174 @@ export function RocketClashGame() {
       ctx.textAlign = "center";
       ctx.fillText(
         `OPEN: $${roundOpenPriceRef.current.toFixed(selectedAsset === "BTC" ? 1 : 2)}`,
-        95,
-        candleBaselineY + 4
+        90,
+        baselineY + 4
       );
 
-      // Render Historical Completed Candles
-      resolvedCandles.forEach((c, idx) => {
-        const candleX = 175 + idx * 80;
-        const isGreen = c.winnerCall === "UP";
-        const color = isGreen ? "#10B981" : "#EF4444";
+      // Quadrant Watermark Labels
+      ctx.font = "bold 11px system-ui, -apple-system, sans-serif";
+      ctx.fillStyle = "rgba(16, 185, 129, 0.6)";
+      ctx.textAlign = "right";
+      ctx.fillText("🟢 SUBE (BULL ZONE)", width - 40, baselineY - 45);
 
-        const deltaClose = ((c.closePrice - c.openPrice) / c.openPrice) * 100;
-        const candleH = Math.max(10, Math.min(65, Math.abs(deltaClose) * 400));
-        const candleY = isGreen ? candleBaselineY - candleH : candleBaselineY;
+      ctx.fillStyle = "rgba(239, 68, 68, 0.6)";
+      ctx.fillText("🔴 BAJA (BEAR ZONE)", width - 40, baselineY + 55);
 
-        // Wick
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(candleX + 14, candleBaselineY - 35);
-        ctx.lineTo(candleX + 14, candleBaselineY + 35);
-        ctx.stroke();
-
-        // Body
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(candleX, candleY, 28, candleH, 3);
-        ctx.fill();
-
-        // Round Badge
-        ctx.font = "bold 8.5px system-ui, sans-serif";
-        ctx.fillStyle = "#64748B";
-        ctx.textAlign = "center";
-        ctx.fillText(`R${c.roundNumber}`, candleX + 14, candleBaselineY + 48);
-
-        // Nitro Tag on completed candle
-        if (c.p1UsedNitro) {
-          ctx.fillStyle = "#F59E0B";
-          ctx.beginPath();
-          ctx.roundRect(candleX - 4, candleBaselineY + 54, 36, 12, 3);
-          ctx.fill();
-          ctx.font = "bold 7px system-ui, sans-serif";
-          ctx.fillStyle = "#FFFFFF";
-          ctx.fillText("⚡NITRO", candleX + 14, candleBaselineY + 63);
-        }
-      });
-
-      // Render Active Live Forming Candle
-      const currP = currentPriceRef.current;
-      const openP = roundOpenPriceRef.current;
-      const deltaPct = openP > 0 ? ((currP - openP) / openP) * 100 : 0;
-
+      // 4. PHYSICS UPDATE DURING ACTIVE ROUND
       if (gameState === "playing") {
-        const activeCandleX = 175 + resolvedCandles.length * 80;
-        const isGreen = deltaPct >= 0;
-        const activeColor = isGreen ? "#10B981" : "#EF4444";
-        const dynamicH = Math.max(8, Math.min(80, Math.abs(deltaPct) * 550));
-        const candleY = isGreen ? candleBaselineY - dynamicH : candleBaselineY;
+        const startX = 140;
+        const finishX = width - 100;
+        const progress = Math.min(1.0, (5.0 - roundTimeLeft) / 5.0);
+        const currentX = startX + progress * (finishX - startX);
 
-        // Live Wick
-        ctx.strokeStyle = activeColor;
-        ctx.lineWidth = 2.5;
+        // Update P1 Hold-to-Thrust Physics (as in cc62825)
+        const gravity = 0.38;
+        const thrust = -0.78;
+
+        const p1 = p1Ref.current;
+        p1.x = currentX;
+
+        if (p1.thrusting) {
+          p1.vy += thrust;
+          // Spawn exhaust particles
+          for (let i = 0; i < 2; i++) {
+            particlesRef.current.push({
+              x: p1.x - 24,
+              y: p1.y + (Math.random() - 0.5) * 6,
+              vx: -4 - Math.random() * 2,
+              vy: (Math.random() - 0.5) * 2,
+              life: 0,
+              maxLife: 16,
+              color: Math.random() > 0.3 ? "#6E4EF4" : "#38BDF8",
+              size: 2.5 + Math.random() * 2,
+            });
+          }
+        } else {
+          p1.vy += gravity;
+        }
+
+        p1.vy *= 0.96; // air damping
+        p1.y += p1.vy;
+
+        // Arena vertical clamp
+        if (p1.y < 85) {
+          p1.y = 85;
+          p1.vy = 0;
+        } else if (p1.y > height - 35) {
+          p1.y = height - 35;
+          p1.vy = 0;
+        }
+
+        p1.tilt = Math.max(-28, Math.min(28, p1.vy * 3.2));
+        p1TrailRef.current.push({ x: p1.x, y: p1.y });
+        setP1CurrentZone(p1.y < baselineY ? "UP" : "DOWN");
+
+        // Update P2 (MemeBot AI) Physics
+        const p2 = p2Ref.current;
+        p2.x = currentX;
+
+        if (p2.thrusting) {
+          p2.vy += thrust;
+          for (let i = 0; i < 2; i++) {
+            particlesRef.current.push({
+              x: p2.x - 24,
+              y: p2.y + (Math.random() - 0.5) * 6,
+              vx: -4 - Math.random() * 2,
+              vy: (Math.random() - 0.5) * 2,
+              life: 0,
+              maxLife: 16,
+              color: "#10B981",
+              size: 2.5 + Math.random() * 2,
+            });
+          }
+        } else {
+          p2.vy += gravity;
+        }
+
+        p2.vy *= 0.96;
+        p2.y += p2.vy;
+
+        if (p2.y < 85) {
+          p2.y = 85;
+          p2.vy = 0;
+        } else if (p2.y > height - 35) {
+          p2.y = height - 35;
+          p2.vy = 0;
+        }
+
+        p2.tilt = Math.max(-28, Math.min(28, p2.vy * 3.2));
+        p2TrailRef.current.push({ x: p2.x, y: p2.y });
+        setP2CurrentZone(p2.y < baselineY ? "UP" : "DOWN");
+
+        // Update Real-Time Pyth Oracle Price Ribbon
+        const openP = roundOpenPriceRef.current;
+        const currP = currentPriceRef.current;
+        const delta = openP > 0 ? ((currP - openP) / openP) * 100 : 0;
+        const targetPythY = baselineY - delta * 450;
+        const clampedPythY = Math.max(85, Math.min(height - 35, targetPythY));
+        pythTrailRef.current.push({ x: currentX, y: clampedPythY });
+      }
+
+      // 5. DRAW PYTH ORACLE BENCHMARK SPLINE
+      if (pythTrailRef.current.length > 1) {
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
         ctx.beginPath();
-        ctx.moveTo(activeCandleX + 18, candleBaselineY - (dynamicH + 14));
-        ctx.lineTo(activeCandleX + 18, candleBaselineY + (dynamicH + 14));
+        pythTrailRef.current.forEach((pt, idx) => {
+          if (idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
         ctx.stroke();
+        ctx.setLineDash([]);
 
-        // Glowing Live Candle Body
-        ctx.fillStyle = activeColor;
+        // Live Pyth Price Pin
+        const lastPt = pythTrailRef.current[pythTrailRef.current.length - 1];
+        ctx.fillStyle = currentDeltaPct >= 0 ? "#10B981" : "#EF4444";
         ctx.beginPath();
-        ctx.roundRect(activeCandleX, candleY, 36, dynamicH, 4);
-        ctx.fill();
-
-        // Live Delta Badge
-        ctx.fillStyle = activeColor;
-        ctx.beginPath();
-        ctx.roundRect(activeCandleX - 22, isGreen ? candleY - 22 : candleY + dynamicH + 6, 80, 16, 4);
+        ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.font = "bold 9px monospace";
-        ctx.fillStyle = "#FFFFFF";
-        ctx.textAlign = "center";
         ctx.fillText(
-          `${deltaPct >= 0 ? "+" : ""}${deltaPct.toFixed(3)}%`,
-          activeCandleX + 18,
-          isGreen ? candleY - 11 : candleY + dynamicH + 17
+          `${currentDeltaPct >= 0 ? "+" : ""}${currentDeltaPct.toFixed(3)}%`,
+          lastPt.x + 8,
+          lastPt.y + 3
         );
       }
 
-      // 4. TUG-OF-WAR ROCKET DRAG ARENA (Lower Half: Y 225 -> 410)
-      const arenaTop = 225;
-      const lane1Y = 275; // P1 (You) Lane
-      const lane2Y = 355; // P2 (Rival) Lane
-      const dragCenterX = 380;
-
-      // Arena Separator Line
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(30, arenaTop);
-      ctx.lineTo(width - 30, arenaTop);
-      ctx.stroke();
-
-      // High-Speed Drag Floor Scrolling Lines
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
-      ctx.lineWidth = 1.5;
-      speedLinesRef.current.forEach((sl) => {
-        sl.x -= sl.speed;
-        if (sl.x < 30) sl.x = width - 30;
+      // 6. DRAW P2 (RIVAL) TRAJECTORY ARROW RIBBON
+      if (p2TrailRef.current.length > 1) {
+        ctx.strokeStyle = "rgba(15, 23, 42, 0.4)";
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(sl.x, sl.y);
-        ctx.lineTo(sl.x + sl.length, sl.y);
+        p2TrailRef.current.forEach((pt, idx) => {
+          if (idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
         ctx.stroke();
-      });
-
-      // Calculate Real-Time Dynamic Thrust Forces
-      let f1 = 0.3; // Idle thrust
-      let f2 = 0.3;
-
-      if (gameState === "playing" && roundPhase === "RESOLVING") {
-        const p1 = p1CallRef.current;
-        const p2 = p2CallRef.current;
-        const absDelta = Math.abs(deltaPct);
-
-        // P1 Force Evaluation (Boosted if Nitro active)
-        const p1NitroMultiplier = p1NitroActiveRef.current ? 1.5 : 1.0;
-        if ((p1 === "UP" && deltaPct > 0) || (p1 === "DOWN" && deltaPct < 0)) {
-          f1 = Math.min((1.0 + absDelta * 30) * p1NitroMultiplier, 3.8);
-        } else {
-          f1 = 0.15; // Stalling
-        }
-
-        // P2 Force Evaluation (Boosted if Nitro active)
-        const p2NitroMultiplier = p2NitroActiveRef.current ? 1.5 : 1.0;
-        if ((p2 === "UP" && deltaPct > 0) || (p2 === "DOWN" && deltaPct < 0)) {
-          f2 = Math.min((1.0 + absDelta * 30) * p2NitroMultiplier, 3.8);
-        } else {
-          f2 = 0.15; // Stalling
-        }
-
-        // Update audio engine frequency & volume
-        soundEngine.updateThrustIntensity(Math.max(f1, f2) / 3.8);
-
-        // Screen micro-shake if volatility bursts
-        if (absDelta > 0.04) {
-          screenShakeRef.current = Math.min(screenShakeRef.current + 0.3, 2.5);
-        }
       }
 
-      // Update UI Telemetry
-      setP1ThrustPercent(Math.round(f1 * 100));
-      setP2ThrustPercent(Math.round(f2 * 100));
-      const netAdv = Number((f1 - f2).toFixed(2));
-      setTugOfWarAdvantage(netAdv);
+      // 7. DRAW P1 (PLAYER) TRAJECTORY ARROW RIBBON
+      if (p1TrailRef.current.length > 1) {
+        const isUp = p1Ref.current.y < baselineY;
+        const ribbonColor = isUp ? "#10B981" : "#EF4444";
 
-      // Smooth Physics Interpolation for Rocket Positions
-      const maxOffset = 135;
-      const targetP1X = dragCenterX + Math.max(-maxOffset, Math.min(maxOffset, (f1 - f2) * 55));
-      const targetP2X = dragCenterX - Math.max(-maxOffset, Math.min(maxOffset, (f1 - f2) * 45));
+        const ribbonGrad = ctx.createLinearGradient(140, 0, p1Ref.current.x, 0);
+        ribbonGrad.addColorStop(0, "rgba(110, 78, 244, 0.3)");
+        ribbonGrad.addColorStop(1, ribbonColor);
 
-      p1PhysicsX.current += (targetP1X - p1PhysicsX.current) * 0.12;
-      p2PhysicsX.current += (targetP2X - p2PhysicsX.current) * 0.12;
-
-      const p1X = p1PhysicsX.current;
-      const p2X = p2PhysicsX.current;
-
-      // Draw Tug-of-War Laser Tension Beam
-      ctx.save();
-      const beamGrad = ctx.createLinearGradient(p1X, lane1Y, p2X, lane2Y);
-      beamGrad.addColorStop(0, f1 > f2 ? "rgba(110, 78, 244, 0.75)" : "rgba(110, 78, 244, 0.2)");
-      beamGrad.addColorStop(1, f2 > f1 ? "rgba(16, 185, 129, 0.75)" : "rgba(16, 185, 129, 0.2)");
-      ctx.strokeStyle = beamGrad;
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([6, 6]);
-      ctx.lineDashOffset = -Date.now() * 0.04;
-      ctx.beginPath();
-      ctx.moveTo(p1X + 15, lane1Y);
-      ctx.lineTo(p2X + 15, lane2Y);
-      ctx.stroke();
-      ctx.restore();
-
-      // Render expanding shockwaves
-      shockwavesRef.current.forEach((sw) => {
-        sw.radius += 3.5;
-        sw.alpha *= 0.92;
-        ctx.save();
-        ctx.strokeStyle = sw.color;
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = Math.max(0, sw.alpha);
+        ctx.strokeStyle = ribbonGrad;
+        ctx.lineWidth = 4.5;
         ctx.beginPath();
-        ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+        p1TrailRef.current.forEach((pt, idx) => {
+          if (idx === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        });
         ctx.stroke();
-        ctx.restore();
-      });
-      shockwavesRef.current = shockwavesRef.current.filter((sw) => sw.alpha > 0.05);
-
-      // Particle Generator: Thruster sparks & stall smoke
-      if (gameState === "playing" && roundPhase === "RESOLVING") {
-        // P1 Exhaust
-        if (f1 > 0.5) {
-          const sparkCount = p1NitroActiveRef.current ? 4 : 2;
-          for (let s = 0; s < sparkCount; s++) {
-            particlesRef.current.push({
-              x: p1X - 32,
-              y: lane1Y + (Math.random() - 0.5) * 6,
-              vx: -(5 + f1 * 4 + Math.random() * 3),
-              vy: (Math.random() - 0.5) * 2,
-              life: 0,
-              maxLife: 14 + Math.random() * 10,
-              color: p1NitroActiveRef.current
-                ? Math.random() > 0.4 ? "#F59E0B" : "#EF4444"
-                : Math.random() > 0.3 ? "#6E4EF4" : "#38BDF8",
-              size: (p1NitroActiveRef.current ? 3.5 : 2.5) + Math.random() * 2,
-            });
-          }
-        } else {
-          // Stall smoke
-          particlesRef.current.push({
-            x: p1X - 25,
-            y: lane1Y + (Math.random() - 0.5) * 4,
-            vx: -1.5,
-            vy: (Math.random() - 0.5) * 1.5,
-            life: 0,
-            maxLife: 20,
-            color: "rgba(148, 163, 184, 0.5)",
-            size: 3 + Math.random() * 4,
-            isSmoke: true,
-          });
-        }
-
-        // P2 Exhaust
-        if (f2 > 0.5) {
-          const sparkCount = p2NitroActiveRef.current ? 4 : 2;
-          for (let s = 0; s < sparkCount; s++) {
-            particlesRef.current.push({
-              x: p2X - 32,
-              y: lane2Y + (Math.random() - 0.5) * 6,
-              vx: -(5 + f2 * 4 + Math.random() * 3),
-              vy: (Math.random() - 0.5) * 2,
-              life: 0,
-              maxLife: 14 + Math.random() * 10,
-              color: p2NitroActiveRef.current
-                ? Math.random() > 0.4 ? "#F59E0B" : "#10B981"
-                : Math.random() > 0.3 ? "#10B981" : "#F59E0B",
-              size: (p2NitroActiveRef.current ? 3.5 : 2.5) + Math.random() * 2,
-            });
-          }
-        } else {
-          // Stall smoke
-          particlesRef.current.push({
-            x: p2X - 25,
-            y: lane2Y + (Math.random() - 0.5) * 4,
-            vx: -1.5,
-            vy: (Math.random() - 0.5) * 1.5,
-            life: 0,
-            maxLife: 20,
-            color: "rgba(148, 163, 184, 0.5)",
-            size: 3 + Math.random() * 4,
-            isSmoke: true,
-          });
-        }
       }
 
-      // Render and update particles
+      // 8. RENDER PARTICLES
       particlesRef.current.forEach((pt) => {
         pt.x += pt.vx;
         pt.y += pt.vy;
@@ -894,181 +666,101 @@ export function RocketClashGame() {
       });
       particlesRef.current = particlesRef.current.filter((pt) => pt.life < pt.maxLife);
 
-      // Helper to draw Apple-grade aerodynamic vector spacecraft
-      const drawSpaceship = (
-        x: number,
-        y: number,
+      // 9. HELPER TO DRAW VECTOR ROCKET WITH ARROWHEAD
+      const renderSpaceship = (
+        r: { x: number; y: number; tilt: number; thrusting: boolean },
         colorPrimary: string,
         colorSecondary: string,
-        thrustVal: number,
-        isP1: boolean,
-        nitroActive: boolean
+        label: string,
+        isP1: boolean
       ) => {
         ctx.save();
-        ctx.translate(x, y);
+        ctx.translate(r.x, r.y);
+        ctx.rotate((r.tilt * Math.PI) / 180);
 
-        // Nitro Golden Aura
-        if (nitroActive) {
-          ctx.strokeStyle = "rgba(245, 158, 11, 0.6)";
-          ctx.lineWidth = 3;
+        // Thruster flame
+        if (r.thrusting) {
+          const flameLength = 16 + Math.random() * 10;
+          ctx.fillStyle = isP1 ? "#6E4EF4" : "#10B981";
           ctx.beginPath();
-          ctx.ellipse(0, 0, 36, 18, 0, 0, Math.PI * 2);
-          ctx.stroke();
-        }
+          ctx.moveTo(-18, -4);
+          ctx.lineTo(-18 - flameLength, 0);
+          ctx.lineTo(-18, 4);
+          ctx.closePath();
+          ctx.fill();
 
-        // Dynamic Thruster Flame
-        const flameLength = Math.max(8, thrustVal * 32 + Math.sin(Date.now() * 0.05) * 4);
-        const flameGrad = ctx.createLinearGradient(-30 - flameLength, 0, -30, 0);
-        if (thrustVal > 0.4) {
-          flameGrad.addColorStop(0, "rgba(255, 255, 255, 0)");
-          flameGrad.addColorStop(
-            0.4,
-            nitroActive
-              ? "rgba(245, 158, 11, 0.9)"
-              : isP1
-              ? "rgba(110, 78, 244, 0.8)"
-              : "rgba(16, 185, 129, 0.8)"
-          );
-          flameGrad.addColorStop(0.8, nitroActive ? "#EF4444" : isP1 ? "#38BDF8" : "#FBBF24");
-          flameGrad.addColorStop(1, "#FFFFFF");
-
-          ctx.fillStyle = flameGrad;
+          ctx.fillStyle = "#FFFFFF";
           ctx.beginPath();
-          ctx.moveTo(-30, -6);
-          ctx.lineTo(-30 - flameLength, 0);
-          ctx.lineTo(-30, 6);
+          ctx.moveTo(-18, -2);
+          ctx.lineTo(-18 - flameLength * 0.5, 0);
+          ctx.lineTo(-18, 2);
           ctx.closePath();
           ctx.fill();
         }
 
-        // Soft ambient drop shadow
+        // Soft drop shadow
         ctx.shadowColor = "rgba(0, 0, 0, 0.12)";
-        ctx.shadowBlur = 8;
-        ctx.shadowOffsetY = 3;
+        ctx.shadowBlur = 6;
+        ctx.shadowOffsetY = 2;
 
-        // Fuselage Main Body
-        const bodyGrad = ctx.createLinearGradient(-30, 0, 30, 0);
-        bodyGrad.addColorStop(0, colorSecondary);
-        bodyGrad.addColorStop(0.7, colorPrimary);
-        bodyGrad.addColorStop(1, "#FFFFFF");
-
-        ctx.fillStyle = bodyGrad;
+        // Fuselage Body
+        ctx.fillStyle = colorPrimary;
         ctx.beginPath();
-        ctx.moveTo(32, 0); // Sharp nose cone
-        ctx.lineTo(5, -10); // Upper shoulder
-        ctx.lineTo(-24, -14); // Upper wing tip
-        ctx.lineTo(-22, -6);
-        ctx.lineTo(-30, -5); // Tail engine mount
-        ctx.lineTo(-30, 5);
-        ctx.lineTo(-22, 6);
-        ctx.lineTo(-24, 14); // Lower wing tip
-        ctx.lineTo(5, 10);
+        ctx.moveTo(22, 0); // Nose cone
+        ctx.lineTo(4, -8);
+        ctx.lineTo(-16, -11);
+        ctx.lineTo(-14, -4);
+        ctx.lineTo(-18, -3);
+        ctx.lineTo(-18, 3);
+        ctx.lineTo(-14, 4);
+        ctx.lineTo(-16, 11);
+        ctx.lineTo(4, 8);
         ctx.closePath();
         ctx.fill();
 
         ctx.shadowColor = "transparent";
 
-        // Cockpit Glass Canopy
-        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        // Cockpit Glass
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
         ctx.beginPath();
-        ctx.ellipse(6, 0, 10, 4, 0, 0, Math.PI * 2);
+        ctx.ellipse(4, 0, 7, 3, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Wing Accent Stripes
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
-        ctx.lineWidth = 1.5;
+        // Label Badge Floating Above Rocket
+        ctx.restore();
+        ctx.save();
+        ctx.translate(r.x, r.y);
+        ctx.fillStyle = colorSecondary;
         ctx.beginPath();
-        ctx.moveTo(-12, -10);
-        ctx.lineTo(2, -6);
-        ctx.moveTo(-12, 10);
-        ctx.lineTo(2, 6);
-        ctx.stroke();
+        ctx.roundRect(-30, -26, 60, 15, 3);
+        ctx.fill();
 
+        ctx.font = "bold 8px system-ui, sans-serif";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.textAlign = "center";
+        ctx.fillText(label, 0, -15);
         ctx.restore();
       };
 
-      // Draw P1 Rocket (Gmonad Alpha)
-      drawSpaceship(p1X, lane1Y, "#6E4EF4", "#4F46E5", f1, true, p1NitroActiveRef.current);
-
-      // P1 Label Tag & Streak
-      ctx.fillStyle = p1NitroActiveRef.current ? "#F59E0B" : "#6E4EF4";
-      ctx.beginPath();
-      ctx.roundRect(p1X - 52, lane1Y - 26, 104, 16, 4);
-      ctx.fill();
-      ctx.font = "bold 8px system-ui, sans-serif";
-      ctx.fillStyle = "#FFFFFF";
-      ctx.textAlign = "center";
-      ctx.fillText(
-        `YOU • ${p1Call ? (p1Call === "UP" ? "SUBE 🟢" : "BAJA 🔴") : "WAITING"}${
-          p1NitroActiveRef.current ? " ⚡X2" : ""
-        }`,
-        p1X,
-        lane1Y - 15
+      // Render P2 (Rival) Rocket
+      renderSpaceship(
+        p2Ref.current,
+        "#0F172A",
+        "#1E293B",
+        `${gameMode === "solo" ? "MEMEBOT" : "RIVAL"}`,
+        false
       );
 
-      // P1 Streak Badge
-      if (p1Streak >= 2) {
-        ctx.fillStyle = "#EF4444";
-        ctx.beginPath();
-        ctx.roundRect(p1X - 35, lane1Y - 42, 70, 13, 3);
-        ctx.fill();
-        ctx.font = "black 7.5px system-ui, sans-serif";
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillText(`🔥 STREAK x${p1Streak}`, p1X, lane1Y - 33);
-      }
-
-      // Draw P2 Rocket (MemeBot AI / Rival)
-      drawSpaceship(p2X, lane2Y, "#0F172A", "#1E293B", f2, false, p2NitroActiveRef.current);
-
-      // P2 Label Tag
-      ctx.fillStyle = p2NitroActiveRef.current ? "#F59E0B" : "#0F172A";
-      ctx.beginPath();
-      ctx.roundRect(p2X - 54, lane2Y + 12, 108, 16, 4);
-      ctx.fill();
-      ctx.font = "bold 8px system-ui, sans-serif";
-      ctx.fillStyle = "#FFFFFF";
-      ctx.textAlign = "center";
-      ctx.fillText(
-        `${gameMode === "solo" ? "MEMEBOT" : "RIVAL"} • ${
-          p2Call ? (p2Call === "UP" ? "SUBE 🟢" : "BAJA 🔴") : "CALCULATING"
-        }${p2NitroActiveRef.current ? " ⚡X2" : ""}`,
-        p2X,
-        lane2Y + 23
+      // Render P1 (Player) Rocket
+      renderSpaceship(
+        p1Ref.current,
+        "#6E4EF4",
+        "#4F46E5",
+        `YOU (${p1CurrentZone === "UP" ? "SUBE 🟢" : "BAJA 🔴"})`,
+        true
       );
-
-      // P2 Streak Badge
-      if (p2Streak >= 2) {
-        ctx.fillStyle = "#EF4444";
-        ctx.beginPath();
-        ctx.roundRect(p2X - 35, lane2Y + 31, 70, 13, 3);
-        ctx.fill();
-        ctx.font = "black 7.5px system-ui, sans-serif";
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillText(`🔥 STREAK x${p2Streak}`, p2X, lane2Y + 40);
-      }
-
-      // Tug-of-War Dynamic Center Force Gauge
-      const gaugeY = (lane1Y + lane2Y) / 2;
-      const gaugeW = 220;
-      const gaugeH = 6;
-      const gaugeX = width / 2 - gaugeW / 2;
-
-      ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
-      ctx.beginPath();
-      ctx.roundRect(gaugeX, gaugeY - gaugeH / 2, gaugeW, gaugeH, 3);
-      ctx.fill();
-
-      // Gauge Balance Needle
-      const needleOffset = Math.max(-gaugeW / 2, Math.min(gaugeW / 2, (f1 - f2) * 40));
-      const needleX = width / 2 + needleOffset;
-
-      ctx.fillStyle = f1 >= f2 ? "#6E4EF4" : "#10B981";
-      ctx.beginPath();
-      ctx.arc(needleX, gaugeY, 5, 0, Math.PI * 2);
-      ctx.fill();
 
       ctx.restore();
-
       animFrameId.current = requestAnimationFrame(render);
     };
 
@@ -1077,14 +769,12 @@ export function RocketClashGame() {
   }, [
     gameState,
     currentRound,
-    p1Score,
-    p2Score,
-    p1Streak,
-    p2Streak,
-    resolvedCandles,
+    roundTimeLeft,
+    p1CurrentZone,
+    p2CurrentZone,
+    currentDeltaPct,
     selectedAsset,
     gameMode,
-    isPhotoFinishTension,
   ]);
 
   const totalPot = (stakeMon * 2).toFixed(2);
@@ -1092,7 +782,7 @@ export function RocketClashGame() {
 
   return (
     <div className="flex flex-col items-center w-full max-w-5xl mx-auto px-4 py-6 font-sans select-none text-slate-900">
-      {/* 1. Top Navigation & Status */}
+      {/* 1. Top Navigation & Oracle Status */}
       <div className="w-full flex items-center justify-between mb-4">
         <Link
           href="/"
@@ -1105,7 +795,7 @@ export function RocketClashGame() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-black/[0.06] shadow-sm text-xs font-medium text-slate-700">
             <Radio className={`w-3.5 h-3.5 ${isLive ? "text-emerald-500 animate-pulse" : "text-amber-500"}`} />
-            <span>Pyth Hermes Live Stream</span>
+            <span>Pyth Hermes Real-Time Stream</span>
           </div>
 
           <button
@@ -1139,18 +829,14 @@ export function RocketClashGame() {
         <div className="flex items-center gap-4 px-5 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
           <div className="text-center">
             <div className="text-[10px] font-semibold text-slate-400 uppercase">You (P1)</div>
-            <div className="text-base font-black text-[#6E4EF4] font-mono">
-              {p1Score} PTS {p1Streak >= 2 && <span className="text-xs text-rose-500">🔥x{p1Streak}</span>}
-            </div>
+            <div className="text-base font-black text-[#6E4EF4] font-mono">{p1Score} WINS</div>
           </div>
           <div className="text-xs font-bold text-slate-300">VS</div>
           <div className="text-center">
             <div className="text-[10px] font-semibold text-slate-400 uppercase">
               {gameMode === "solo" ? "MemeBot AI" : "Rival"}
             </div>
-            <div className="text-base font-black text-slate-800 font-mono">
-              {p2Score} PTS {p2Streak >= 2 && <span className="text-xs text-rose-500">🔥x{p2Streak}</span>}
-            </div>
+            <div className="text-base font-black text-slate-800 font-mono">{p2Score} WINS</div>
           </div>
         </div>
 
@@ -1166,26 +852,23 @@ export function RocketClashGame() {
         </div>
       </div>
 
-      {/* 3. Canvas Candlestick + Tug-of-War Drag Arena */}
+      {/* 3. Canvas Arrow Prediction Arena */}
       <div className="relative w-full rounded-2xl overflow-hidden border border-black/[0.08] shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white">
         <canvas
           ref={canvasRef}
           width={880}
-          height={415}
-          className="w-full h-auto block touch-none"
+          height={420}
+          className="w-full h-auto block touch-none cursor-pointer"
+          onPointerDown={handleP1ThrustStart}
+          onPointerUp={handleP1ThrustEnd}
+          onPointerLeave={handleP1ThrustEnd}
         />
 
-        {/* Live Round Phase Pill */}
+        {/* Live Round Timer */}
         {gameState === "playing" && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-white/95 border border-black/[0.08] shadow-sm flex items-center gap-2 text-xs font-bold text-slate-800 font-mono">
             <Clock className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            <span>
-              {roundPhase === "LOCK_IN"
-                ? `LOCK CALL: ${roundTimeLeft}s`
-                : isPhotoFinishTension
-                ? `⚡ PHOTO-FINISH TENSION: ${roundTimeLeft}s`
-                : `TUG-OF-WAR CLASH: ${roundTimeLeft}s`}
-            </span>
+            <span>ROUND {currentRound} • {roundTimeLeft}s LEFT</span>
           </div>
         )}
 
@@ -1197,11 +880,11 @@ export function RocketClashGame() {
             </div>
 
             <h2 className="text-2xl font-bold text-slate-900 mb-1.5">
-              Rocket Clash: 4-Candle Showdown
+              Rocket Clash: 4-Round Arrow Prediction
             </h2>
 
             <p className="text-xs text-slate-500 max-w-md mb-6 leading-relaxed">
-              4 asaltos de 5s. Fija SUBE o BAJA. El precio real de Pyth alimenta la potencia de tus motores en una batalla Tug-of-War. ¡Usa tu Nitro (x2) estratégicamente en tu mejor vela!
+              4 asaltos de 5s. Mantén presionado `[Espacio]` o `[↑]` para subir a la zona 🟢 SUBE o suelta para caer a 🔴 BAJA. ¡Dibuja tu flecha y acierta hacia dónde cierra la vela de Pyth!
             </p>
 
             <div className="flex items-center gap-2 mb-6 bg-slate-100 p-1.5 rounded-2xl">
@@ -1250,7 +933,7 @@ export function RocketClashGame() {
               onClick={startMatch}
               className="px-8 py-3 rounded-2xl bg-[#6E4EF4] text-white font-semibold text-sm hover:bg-[#5b3ce0] active:scale-95 transition-all shadow-md shadow-purple-600/20"
             >
-              Start Tug-of-War Duel (0.25 MON)
+              Start 4-Round Arrow Match (0.25 MON)
             </button>
           </div>
         )}
@@ -1264,9 +947,9 @@ export function RocketClashGame() {
 
             <h3 className="text-2xl font-bold text-slate-900 mb-1">
               {matchWinner === "P1"
-                ? "Tug-of-War Champion! 🏆"
+                ? "Victory! You Out-Predicted the Market 🏆"
                 : matchWinner === "P2"
-                ? "Rival Won the Clash 🤖"
+                ? "Rival Won the Arrow Showdown 🤖"
                 : "Dead Heat Tie ⚖️"}
             </h3>
 
@@ -1277,13 +960,13 @@ export function RocketClashGame() {
             <div className="grid grid-cols-2 gap-4 w-full max-w-xs mb-6">
               <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 text-center">
                 <div className="text-[10px] text-purple-600 font-semibold uppercase">YOU (P1)</div>
-                <div className="text-2xl font-black text-[#6E4EF4] font-mono">{p1Score} PTS</div>
+                <div className="text-2xl font-black text-[#6E4EF4] font-mono">{p1Score} WINS</div>
               </div>
               <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-center">
                 <div className="text-[10px] text-slate-500 font-semibold uppercase">
                   {gameMode === "solo" ? "MEMEBOT AI" : "RIVAL"}
                 </div>
-                <div className="text-2xl font-black text-slate-800 font-mono">{p2Score} PTS</div>
+                <div className="text-2xl font-black text-slate-800 font-mono">{p2Score} WINS</div>
               </div>
             </div>
 
@@ -1306,15 +989,19 @@ export function RocketClashGame() {
         )}
       </div>
 
-      {/* 4. Real-time Telemetry & Tug-of-War Power Gauges */}
+      {/* 4. Live Telemetry & Quadrant Posture */}
       {gameState === "playing" && (
         <div className="w-full mt-3 grid grid-cols-3 gap-3">
           <div className="p-2.5 rounded-xl bg-purple-50/60 border border-purple-200/60 flex items-center gap-2.5">
             <Flame className="w-4 h-4 text-[#6E4EF4]" />
             <div>
-              <div className="text-[10px] font-semibold text-purple-600 uppercase">Your Engine Power</div>
-              <div className="text-xs font-bold text-slate-900 font-mono">
-                {p1ThrustPercent}% {p1ThrustPercent > 120 ? "🔥 OVERDRIVE" : p1ThrustPercent < 30 ? "⚠️ STALL" : "ACTIVE"}
+              <div className="text-[10px] font-semibold text-purple-600 uppercase">Your Arrow Posture</div>
+              <div className="text-xs font-bold font-mono">
+                {p1CurrentZone === "UP" ? (
+                  <span className="text-emerald-600 font-black">🟢 SUBE (BULL)</span>
+                ) : (
+                  <span className="text-rose-600 font-black">🔴 BAJA (BEAR)</span>
+                )}
               </div>
             </div>
           </div>
@@ -1322,224 +1009,76 @@ export function RocketClashGame() {
           <div className="p-2.5 rounded-xl bg-slate-50 border border-black/[0.06] flex items-center gap-2.5 text-center justify-center">
             <Activity className="w-4 h-4 text-slate-500" />
             <div>
-              <div className="text-[10px] font-semibold text-slate-500 uppercase">Tug-of-War Advantage</div>
+              <div className="text-[10px] font-semibold text-slate-500 uppercase">Pyth Price Delta</div>
               <div className="text-xs font-bold font-mono">
-                {tugOfWarAdvantage > 0 ? (
-                  <span className="text-purple-600 font-black">◄ P1 PULLING (+{tugOfWarAdvantage})</span>
-                ) : tugOfWarAdvantage < 0 ? (
-                  <span className="text-emerald-600 font-black">RIVAL PULLING ({tugOfWarAdvantage}) ►</span>
+                {currentDeltaPct >= 0 ? (
+                  <span className="text-emerald-600 font-black">+{currentDeltaPct.toFixed(3)}% 🟢</span>
                 ) : (
-                  <span className="text-slate-500">BALANCED</span>
+                  <span className="text-rose-600 font-black">{currentDeltaPct.toFixed(3)}% 🔴</span>
                 )}
               </div>
             </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-slate-50 border border-black/[0.06] flex items-center gap-2.5">
-            <Gauge className="w-4 h-4 text-slate-600" />
+            <div className="w-4 h-4 text-slate-600 text-xs">🤖</div>
             <div>
-              <div className="text-[10px] font-semibold text-slate-500 uppercase">Rival Engine Power</div>
-              <div className="text-xs font-bold text-slate-900 font-mono">
-                {p2ThrustPercent}% {p2ThrustPercent > 120 ? "⚡ BOOST" : p2ThrustPercent < 30 ? "⚠️ STALL" : "ACTIVE"}
+              <div className="text-[10px] font-semibold text-slate-500 uppercase">Rival Arrow Posture</div>
+              <div className="text-xs font-bold font-mono">
+                {p2CurrentZone === "UP" ? (
+                  <span className="text-emerald-600 font-black">🟢 SUBE (BULL)</span>
+                ) : (
+                  <span className="text-rose-600 font-black">🔴 BAJA (BEAR)</span>
+                )}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* 5. Tactical Nitro & Direction Controls */}
-      <div className="w-full mt-3 flex flex-col gap-3">
-        {/* Tactical Nitro Double-Down Activation Bar */}
-        <div className="w-full p-3 rounded-2xl bg-white border border-black/[0.08] shadow-sm flex items-center justify-between">
+      {/* 5. Physical Hold-to-Thrust Interactive Touch Bar */}
+      <div className="w-full mt-3 flex flex-col gap-2">
+        <button
+          onPointerDown={handleP1ThrustStart}
+          onPointerUp={handleP1ThrustEnd}
+          onPointerLeave={handleP1ThrustEnd}
+          disabled={gameState !== "playing"}
+          className={`w-full py-5 px-6 rounded-2xl border transition-all flex items-center justify-between cursor-pointer select-none active:scale-[0.99] ${
+            p1Ref.current.thrusting
+              ? "bg-[#6E4EF4] text-white border-[#6E4EF4] shadow-lg shadow-purple-600/30 ring-4 ring-purple-500/20"
+              : "bg-white border-black/[0.1] text-slate-800 hover:border-black/[0.2]"
+          }`}
+        >
           <div className="flex items-center gap-3">
             <div
-              className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                p1NitroActive
-                  ? "bg-amber-500 text-white shadow-md shadow-amber-500/20"
-                  : p1NitroAvailable
-                  ? "bg-purple-50 text-[#6E4EF4]"
-                  : "bg-slate-100 text-slate-400"
+              className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold transition-all ${
+                p1Ref.current.thrusting ? "bg-white text-[#6E4EF4]" : "bg-purple-50 text-[#6E4EF4]"
               }`}
             >
-              <Rocket className="w-5 h-5" />
+              <ArrowUp className="w-6 h-6" />
             </div>
-            <div>
-              <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                <span>Tactical Nitro Boost (x2 Avance)</span>
-                {p1NitroActive && (
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500 text-white font-bold animate-pulse">
-                    ACTIVADO PARA ESTE ASALTO
-                  </span>
-                )}
+            <div className="text-left">
+              <div className="text-sm font-bold flex items-center gap-2">
+                <span>MANTÉN PULSADO PARA SUBIR 🟢 • SUELTA PARA BAJAR 🔴</span>
               </div>
-              <div className="text-[11px] text-slate-500 font-mono">
-                {p1NitroAvailable
-                  ? "1 carga disponible para toda la partida. Duplica los puntos si ganas este asalto."
-                  : "Carga de Nitro ya utilizada en esta partida."}
+              <div className="text-xs opacity-75 font-mono">
+                Teclas: [Espacio] / [W] / [↑] para propulsar hacia arriba • Suelta o [↓] para descender
               </div>
             </div>
           </div>
 
-          <button
-            onClick={handleToggleP1Nitro}
-            disabled={gameState !== "playing" || roundPhase !== "LOCK_IN" || !p1NitroAvailable}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 ${
-              p1NitroActive
-                ? "bg-amber-500 text-white shadow-md shadow-amber-500/30"
-                : p1NitroAvailable
-                ? "bg-purple-50 text-[#6E4EF4] hover:bg-[#6E4EF4] hover:text-white border border-[#6E4EF4]/20"
-                : "bg-slate-100 text-slate-400 cursor-not-allowed"
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>{p1NitroActive ? "DESACTIVAR [W]" : "ACTIVAR NITRO [W]"}</span>
-          </button>
-        </div>
-
-        {/* Direction Selection */}
-        <div className="flex items-center justify-between px-1">
-          <div className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-            <Zap className="w-4 h-4 text-[#6E4EF4]" />
-            <span>Round {currentRound} Prediction Call (Hotkeys: [A / ←] SUBE • [D / →] BAJA)</span>
-          </div>
-          <div className="text-xs font-mono text-slate-500">
-            {roundPhase === "LOCK_IN" ? (
-              <span className="text-[#6E4EF4] font-bold animate-pulse">LOCKING IN ACTIVE...</span>
+          <div className="flex items-center gap-2 font-mono text-xs font-bold">
+            {p1Ref.current.thrusting ? (
+              <span className="px-3 py-1 rounded-full bg-white/20 text-white animate-pulse">
+                PROPULSORES ACTIVOS (SUBIENDO)
+              </span>
             ) : (
-              <span className="text-emerald-600 font-bold">LOCKED & POWERING THRUSTERS</span>
+              <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600">
+                PLANEO / GRAVEDAD (BAJANDO)
+              </span>
             )}
           </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          {/* SUBE BUTTON */}
-          <button
-            onClick={() => handleP1Call("UP")}
-            disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
-            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
-              p1Call === "UP"
-                ? "bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/20 shadow-sm"
-                : "bg-white border-black/[0.08] hover:border-black/[0.15]"
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
-                  p1Call === "UP" ? "bg-emerald-600 text-white shadow-sm" : "bg-emerald-50 text-emerald-600"
-                }`}
-              >
-                🟢
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <span>SUBE (HIGHER)</span>
-                  {p1Call === "UP" && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
-                      LOCKED
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  Engines ignite on price pumps
-                </div>
-              </div>
-            </div>
-
-            <ArrowUpRight
-              className={`w-6 h-6 transition-transform ${
-                p1Call === "UP" ? "text-emerald-600 scale-125" : "text-slate-400"
-              }`}
-            />
-          </button>
-
-          {/* BAJA BUTTON */}
-          <button
-            onClick={() => handleP1Call("DOWN")}
-            disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
-            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
-              p1Call === "DOWN"
-                ? "bg-rose-500/15 border-rose-500 ring-2 ring-rose-500/20 shadow-sm"
-                : "bg-white border-black/[0.08] hover:border-black/[0.15]"
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
-                  p1Call === "DOWN" ? "bg-rose-600 text-white shadow-sm" : "bg-rose-50 text-rose-600"
-                }`}
-              >
-                🔴
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <span>BAJA (LOWER)</span>
-                  {p1Call === "DOWN" && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-semibold">
-                      LOCKED
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  Engines ignite on price dumps
-                </div>
-              </div>
-            </div>
-
-            <ArrowDownRight
-              className={`w-6 h-6 transition-transform ${
-                p1Call === "DOWN" ? "text-rose-600 scale-125" : "text-slate-400"
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* Rival Call Status Indicator */}
-        {gameMode === "solo" ? (
-          <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center text-base">
-                🤖
-              </div>
-              <div className="text-xs">
-                <span className="font-bold text-slate-900">MemeBot AI: </span>
-                {p2Call ? (
-                  <span
-                    className={`font-mono font-bold px-2 py-0.5 rounded ${
-                      p2Call === "UP" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                    }`}
-                  >
-                    {p2Call === "UP" ? "🟢 SUBE (HIGHER)" : "🔴 BAJA (LOWER)"}
-                    {p2NitroActive && " ⚡NITRO"}
-                  </span>
-                ) : (
-                  <span className="text-slate-400 italic">Reading momentum...</span>
-                )}
-              </div>
-            </div>
-            <div className="text-xs font-mono text-slate-500 italic">&quot;{aiThought}&quot;</div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 mt-1">
-            <button
-              onClick={() => handleP2Call("UP")}
-              disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
-              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                p2Call === "UP" ? "bg-emerald-600 text-white" : "bg-white border-black/[0.08] text-slate-600"
-              }`}
-            >
-              <span>P2: SUBE [↑]</span>
-            </button>
-            <button
-              onClick={() => handleP2Call("DOWN")}
-              disabled={gameState !== "playing" || roundPhase !== "LOCK_IN"}
-              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                p2Call === "DOWN" ? "bg-rose-600 text-white" : "bg-white border-black/[0.08] text-slate-600"
-              }`}
-            >
-              <span>P2: BAJA [↓]</span>
-            </button>
-          </div>
-        )}
+        </button>
       </div>
 
       {/* 6. Apple Design System Rules & Economics Cards */}
@@ -1547,20 +1086,20 @@ export function RocketClashGame() {
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Flame className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            Física Dinámica de Empuje
+            Control Físico Hold-to-Thrust
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Cada tick del oráculo Pyth alimenta directamente la potencia del propulsor de tu nave en tiempo real.
+            Mantén pulsado para volar hacia arriba y soltar para descender. Tú dibujas activamente la trayectoria de tu flecha.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            Tug-of-War + Nitro x2
+            4 Asaltos de 5 Segundos
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Activa tu carga de Nitro táctica en tu vela de mayor convicción para duplicar tu avance y despegar.
+            En cada asalto, si tu flecha termina en el cuadrante hacia donde cerró el precio real de Pyth, ganas el asalto.
           </p>
         </div>
 
@@ -1570,7 +1109,7 @@ export function RocketClashGame() {
             5.0% Protocol Rake Garantizado
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Pozo de 0.50 MON. 0.025 MON fijo a la tesorería de Duelio. 0.475 MON directo al ganador del duelo.
+            Pozo P2P de 0.50 MON. 0.025 MON fijo a la tesorería de Duelio. 0.475 MON directo al ganador del duelo.
           </p>
         </div>
       </div>
