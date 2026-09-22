@@ -3,7 +3,6 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { soundEngine } from "./gameAudio";
 import {
-  Flame,
   Trophy,
   Volume2,
   VolumeX,
@@ -17,31 +16,40 @@ import {
   Radio,
   Clock,
   Coins,
-  CheckCircle2,
-  XCircle,
   Shield,
   Percent,
-  Gauge,
   Sparkles,
+  Flame,
+  ArrowUpRight,
+  ArrowDownRight,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
-interface SurfRocket {
-  altitude: number; // in meters (0 to infinity)
-  velocity: number; // vertical speed m/s
-  fuel: number; // 0 to 100%
-  isBoosting: boolean;
-  isStalled: boolean;
-  stallTimeLeft: number;
-  isSurfing: boolean;
+type Stance = "LONG" | "SHORT";
+
+interface SurferRocket {
+  altitude: number;
+  velocity: number;
+  score: number;
+  combo: number;
+  stance: Stance;
+  matchesTrend: boolean;
+  accuracyTicks: number;
+  totalTicks: number;
   name: string;
   avatar: string;
+}
+
+interface FloatingScore {
+  x: number;
+  y: number;
+  text: string;
   color: string;
-  flameColor: string;
-  side: "BULL" | "BEAR";
+  alpha: number;
+  vy: number;
 }
 
 interface Particle {
@@ -63,13 +71,11 @@ interface Star {
 }
 
 interface AIBrain {
-  state: "ANALYZING" | "SURFING" | "RECHARGING" | "CHASING" | "FINAL_SPRINT";
+  currentStance: Stance;
+  lastReactionTime: number;
   thought: string;
-  lastDecisionTime: number;
-  boostTarget: boolean;
+  reactionDelayMs: number;
 }
-
-type MatchDuration = 15 | 30;
 
 export function RocketClashGame() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -79,78 +85,99 @@ export function RocketClashGame() {
   const priceState = usePriceStream(selectedAsset);
   const { currentPrice, isLive } = priceState;
 
-  // Game settings & state
-  const [gameMode, setGameMode] = useState<"versus" | "solo">("solo");
-  const [selectedDuration, setSelectedDuration] = useState<MatchDuration>(15);
-  const [playerSide, setPlayerSide] = useState<"BULL" | "BEAR">("BULL");
+  // Game configuration & round state
+  const [gameMode, setGameMode] = useState<"solo" | "versus">("solo");
   const [stakeMon, setStakeMon] = useState<number>(0.25);
   const [gameState, setGameState] = useState<"idle" | "countdown" | "playing" | "gameover">("idle");
   const [countdown, setCountdown] = useState<number>(3);
-  const [timeLeft, setTimeLeft] = useState<number>(15);
+  const [timeLeft, setTimeLeft] = useState<number>(20);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [winner, setWinner] = useState<"P1" | "P2" | "DRAW" | null>(null);
 
-  // Strike price locked at start of round
+  // Price history and momentum tracking
   const [strikePrice, setStrikePrice] = useState<number>(currentPrice);
   const strikePriceRef = useRef<number>(currentPrice);
   const currentPriceRef = useRef<number>(currentPrice);
+  const prevPriceRef = useRef<number>(currentPrice);
+  const momentumRef = useRef<"PUMP" | "DUMP" | "FLAT">("FLAT");
+  const [marketMomentum, setMarketMomentum] = useState<"PUMP" | "DUMP" | "FLAT">("FLAT");
 
   useEffect(() => {
+    const prev = currentPriceRef.current;
     currentPriceRef.current = currentPrice;
+    prevPriceRef.current = prev;
+
     if (gameState === "idle") {
       setStrikePrice(currentPrice);
       strikePriceRef.current = currentPrice;
     }
+
+    if (currentPrice > prev + 0.0001) {
+      momentumRef.current = "PUMP";
+      setMarketMomentum("PUMP");
+    } else if (currentPrice < prev - 0.0001) {
+      momentumRef.current = "DUMP";
+      setMarketMomentum("DUMP");
+    }
   }, [currentPrice, gameState]);
 
-  // Live HUD telemetry for React rendering
-  const [p1Telemetry, setP1Telemetry] = useState({ altitude: 0, fuel: 100, isBoosting: false, isSurfing: false, isStalled: false });
-  const [p2Telemetry, setP2Telemetry] = useState({ altitude: 0, fuel: 100, isBoosting: false, isSurfing: false, isStalled: false });
-  const [aiThought, setAiThought] = useState<string>("Analyzing chart... 📊");
+  // Live HUD telemetry
+  const [p1Telemetry, setP1Telemetry] = useState({
+    score: 0,
+    combo: 1.0,
+    stance: "LONG" as Stance,
+    matches: false,
+    accuracy: 100,
+  });
+  const [p2Telemetry, setP2Telemetry] = useState({
+    score: 0,
+    combo: 1.0,
+    stance: "SHORT" as Stance,
+    matches: false,
+    accuracy: 100,
+  });
+  const [aiThought, setAiThought] = useState<string>("Analyzing trend momentum... 📊");
 
-  // Physics references
+  // Physics & Animation references
   const animFrameId = useRef<number>(0);
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const p1Ref = useRef<SurfRocket>({
+  const p1Ref = useRef<SurferRocket>({
     altitude: 0,
-    velocity: 0,
-    fuel: 100,
-    isBoosting: false,
-    isStalled: false,
-    stallTimeLeft: 0,
-    isSurfing: false,
+    velocity: 15,
+    score: 0,
+    combo: 1.0,
+    stance: "LONG",
+    matchesTrend: false,
+    accuracyTicks: 0,
+    totalTicks: 0,
     name: "Gmonad Alpha",
     avatar: "🟣",
-    color: "#836EF9",
-    flameColor: "#FF6B00",
-    side: "BULL",
   });
 
-  const p2Ref = useRef<SurfRocket>({
+  const p2Ref = useRef<SurferRocket>({
     altitude: 0,
-    velocity: 0,
-    fuel: 100,
-    isBoosting: false,
-    isStalled: false,
-    stallTimeLeft: 0,
-    isSurfing: false,
+    velocity: 15,
+    score: 0,
+    combo: 1.0,
+    stance: "SHORT",
+    matchesTrend: false,
+    accuracyTicks: 0,
+    totalTicks: 0,
     name: "MemeBot AI",
     avatar: "🤖",
-    color: "#EF4444",
-    flameColor: "#DC2626",
-    side: "BEAR",
   });
 
   const aiBrainRef = useRef<AIBrain>({
-    state: "ANALYZING",
-    thought: "Watching candle ticks... 👀",
-    lastDecisionTime: 0,
-    boostTarget: false,
+    currentStance: "SHORT",
+    lastReactionTime: 0,
+    thought: "Analyzing trend momentum... 📊",
+    reactionDelayMs: 320,
   });
 
   const particlesRef = useRef<Particle[]>([]);
+  const floatingScoresRef = useRef<FloatingScore[]>([]);
   const starsRef = useRef<Star[]>([]);
 
   // Sound toggle
@@ -160,70 +187,97 @@ export function RocketClashGame() {
     soundEngine.setMuted(next);
   };
 
-  // Generate background stars / dust particles
+  // Generate background stars
   useEffect(() => {
     const stars: Star[] = [];
-    for (let i = 0; i < 45; i++) {
+    for (let i = 0; i < 40; i++) {
       stars.push({
-        x: Math.random() * 800,
-        y: Math.random() * 450,
+        x: Math.random() * 880,
+        y: Math.random() * 480,
         size: Math.random() * 2 + 1,
-        speed: Math.random() * 1.5 + 0.8,
-        opacity: Math.random() * 0.5 + 0.2,
+        speed: Math.random() * 1.5 + 0.5,
+        opacity: Math.random() * 0.4 + 0.2,
       });
     }
     starsRef.current = stars;
   }, []);
 
-  // Keyboard controls with spacebar scroll prevention
+  // Stance Switch Action (P1)
+  const switchP1Stance = useCallback((newStance: Stance) => {
+    if (gameState !== "playing") return;
+    if (p1Ref.current.stance === newStance) return;
+
+    p1Ref.current.stance = newStance;
+    soundEngine.playStanceSwitchSound(newStance === "LONG");
+
+    // Push switch particle burst
+    const laneX = 880 * 0.32;
+    for (let i = 0; i < 14; i++) {
+      particlesRef.current.push({
+        x: laneX + (Math.random() - 0.5) * 20,
+        y: 280,
+        vx: (Math.random() - 0.5) * 40,
+        vy: (Math.random() - 0.5) * 40,
+        size: Math.random() * 4 + 2,
+        alpha: 1.0,
+        color: newStance === "LONG" ? "#10B981" : "#EF4444",
+      });
+    }
+
+    setP1Telemetry((prev) => ({ ...prev, stance: newStance }));
+  }, [gameState]);
+
+  // Stance Switch Action (P2 in Versus)
+  const switchP2Stance = useCallback((newStance: Stance) => {
+    if (gameState !== "playing" || gameMode !== "versus") return;
+    if (p2Ref.current.stance === newStance) return;
+
+    p2Ref.current.stance = newStance;
+    soundEngine.playStanceSwitchSound(newStance === "LONG");
+    setP2Telemetry((prev) => ({ ...prev, stance: newStance }));
+  }, [gameState, gameMode]);
+
+  // Keyboard controls with scroll prevention
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+      if (
+        e.code === "Space" ||
+        e.code === "ArrowLeft" ||
+        e.code === "ArrowRight" ||
+        e.code === "ArrowUp" ||
+        e.code === "ArrowDown" ||
+        e.code === "KeyA" ||
+        e.code === "KeyD"
+      ) {
         e.preventDefault();
       }
 
       if (gameState !== "playing") return;
 
-      if (e.code === "Space" || e.code === "KeyW") {
-        const p1 = p1Ref.current;
-        if (!p1.isBoosting && !p1.isStalled && p1.fuel > 5) {
-          p1.isBoosting = true;
-          soundEngine.startThrust(true);
+      // P1 Controls
+      if (e.code === "KeyA" || e.code === "ArrowLeft") {
+        switchP1Stance("LONG");
+      } else if (e.code === "KeyD" || e.code === "ArrowRight") {
+        switchP1Stance("SHORT");
+      } else if (e.code === "Space") {
+        // Spacebar toggles stance
+        const current = p1Ref.current.stance;
+        switchP1Stance(current === "LONG" ? "SHORT" : "LONG");
+      }
+
+      // P2 Controls in Versus Mode
+      if (gameMode === "versus") {
+        if (e.code === "ArrowUp") {
+          switchP2Stance("LONG");
+        } else if (e.code === "ArrowDown") {
+          switchP2Stance("SHORT");
         }
-      }
-
-      if (e.code === "ArrowUp" && gameMode === "versus") {
-        const p2 = p2Ref.current;
-        if (!p2.isBoosting && !p2.isStalled && p2.fuel > 5) {
-          p2.isBoosting = true;
-          soundEngine.startThrust(false);
-        }
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
-        e.preventDefault();
-      }
-
-      if (e.code === "Space" || e.code === "KeyW") {
-        p1Ref.current.isBoosting = false;
-        soundEngine.stopThrust();
-      }
-
-      if (e.code === "ArrowUp" && gameMode === "versus") {
-        p2Ref.current.isBoosting = false;
-        soundEngine.stopThrust();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, { passive: false });
-    window.addEventListener("keyup", handleKeyUp, { passive: false });
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, [gameState, gameMode]);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [gameState, gameMode, switchP1Stance, switchP2Stance]);
 
   // Launch Round Sequence with 3-2-1 Countdown
   const startLaunchSequence = useCallback(() => {
@@ -232,53 +286,47 @@ export function RocketClashGame() {
     setCountdown(3);
     soundEngine.playCountdownBeep(false);
 
-    // Freeze strike price at exact launch start
+    // Lock strike price
     const lockedPrice = currentPriceRef.current;
     setStrikePrice(lockedPrice);
     strikePriceRef.current = lockedPrice;
 
-    // Configure roles
-    const p1Side = playerSide;
-    const p2Side = p1Side === "BULL" ? "BEAR" : "BULL";
-
+    // Reset Surfers
     p1Ref.current = {
       altitude: 0,
-      velocity: 0,
-      fuel: 100,
-      isBoosting: false,
-      isStalled: false,
-      stallTimeLeft: 0,
-      isSurfing: false,
+      velocity: 15,
+      score: 0,
+      combo: 1.0,
+      stance: "LONG",
+      matchesTrend: false,
+      accuracyTicks: 0,
+      totalTicks: 0,
       name: "Gmonad Alpha",
-      avatar: p1Side === "BULL" ? "🐂" : "🐻",
-      color: p1Side === "BULL" ? "#10B981" : "#EF4444",
-      flameColor: "#FF6B00",
-      side: p1Side,
+      avatar: "🟣",
     };
 
     p2Ref.current = {
       altitude: 0,
-      velocity: 0,
-      fuel: 100,
-      isBoosting: false,
-      isStalled: false,
-      stallTimeLeft: 0,
-      isSurfing: false,
+      velocity: 15,
+      score: 0,
+      combo: 1.0,
+      stance: "SHORT",
+      matchesTrend: false,
+      accuracyTicks: 0,
+      totalTicks: 0,
       name: gameMode === "solo" ? "MemeBot AI" : "Rival Challenger",
-      avatar: gameMode === "solo" ? (p2Side === "BULL" ? "🐂" : "🤖") : "🐸",
-      color: p2Side === "BULL" ? "#10B981" : "#EF4444",
-      flameColor: p2Side === "BULL" ? "#059669" : "#DC2626",
-      side: p2Side,
+      avatar: gameMode === "solo" ? "🤖" : "🐸",
     };
 
     aiBrainRef.current = {
-      state: "ANALYZING",
-      thought: "Analyzing market delta... 📊",
-      lastDecisionTime: 0,
-      boostTarget: false,
+      currentStance: "SHORT",
+      lastReactionTime: 0,
+      thought: "Analyzing initial price ticks... 📊",
+      reactionDelayMs: 320,
     };
 
     particlesRef.current = [];
+    floatingScoresRef.current = [];
 
     let c = 3;
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -294,15 +342,15 @@ export function RocketClashGame() {
         startActiveGame();
       }
     }, 1000);
-  }, [playerSide, gameMode]);
+  }, [gameMode]);
 
-  // Active round loop
+  // Active round timer
   const startActiveGame = () => {
     setGameState("playing");
-    setTimeLeft(selectedDuration);
+    setTimeLeft(20);
 
     if (roundTimerRef.current) clearInterval(roundTimerRef.current);
-    let seconds = selectedDuration;
+    let seconds = 20;
     roundTimerRef.current = setInterval(() => {
       seconds--;
       setTimeLeft(seconds);
@@ -318,18 +366,18 @@ export function RocketClashGame() {
     soundEngine.stopThrust();
     setGameState("gameover");
 
-    const alt1 = p1Ref.current.altitude;
-    const alt2 = p2Ref.current.altitude;
+    const s1 = p1Ref.current.score;
+    const s2 = p2Ref.current.score;
 
-    if (Math.abs(alt1 - alt2) < 2) {
+    if (s1 === s2) {
       setWinner("DRAW");
-    } else if (alt1 > alt2) {
+    } else if (s1 > s2) {
       setWinner("P1");
       soundEngine.playVictoryJingle();
       try {
         confetti({
-          particleCount: 80,
-          spread: 70,
+          particleCount: 90,
+          spread: 80,
           origin: { y: 0.6 },
           colors: ["#6E4EF4", "#10B981", "#F59E0B"],
         });
@@ -358,6 +406,7 @@ export function RocketClashGame() {
     if (!ctx) return;
 
     let lastTime = performance.now();
+    let scoreAccumulator = 0;
 
     const render = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1);
@@ -370,142 +419,125 @@ export function RocketClashGame() {
       const strikeP = strikePriceRef.current;
       const priceDeltaPercent = strikeP > 0 ? ((currP - strikeP) / strikeP) * 100 : 0;
 
-      // 1. UPDATE PHYSICS & AI (WHEN PLAYING)
+      // 1. UPDATE PHYSICS & SCORING WHEN PLAYING
       if (gameState === "playing") {
         const p1 = p1Ref.current;
         const p2 = p2Ref.current;
         const brain = aiBrainRef.current;
 
-        // AI FINITE STATE MACHINE (Evaluates every 220ms, NOT 60 times a second!)
-        if (gameMode === "solo" && time - brain.lastDecisionTime > 220) {
-          brain.lastDecisionTime = time;
+        // Current real-time market trend
+        // If overall delta from strike > 0, trend is LONG; if < 0, SHORT
+        const activeTrend: Stance = priceDeltaPercent >= 0 ? "LONG" : "SHORT";
 
-          const aiSide = p2.side;
-          const marketFavorsAI = (aiSide === "BULL" && priceDeltaPercent > 0.015) || (aiSide === "BEAR" && priceDeltaPercent < -0.015);
-          const aiBehindBy = p1.altitude - p2.altitude;
+        // AI REFLEX LOGIC (Evaluates every 280-350ms, mimicking human visual reflex)
+        if (gameMode === "solo" && time - brain.lastReactionTime > brain.reactionDelayMs) {
+          brain.lastReactionTime = time;
 
-          // AI State Decisions
-          if (p2.isStalled || p2.fuel < 15) {
-            brain.state = "RECHARGING";
-            brain.thought = "Recharging nitro... ⛽";
-            brain.boostTarget = false;
-          } else if (timeLeft <= 3.5 && p2.fuel > 10) {
-            brain.state = "FINAL_SPRINT";
-            brain.thought = "ALL IN! FINAL SPRINT! 🔥";
-            brain.boostTarget = true;
-          } else if (marketFavorsAI && p2.fuel > 25) {
-            brain.state = "SURFING";
-            brain.thought = "Surfing the crypto wave! 🌊";
-            brain.boostTarget = true;
-          } else if (aiBehindBy > 30 && p2.fuel > 35) {
-            brain.state = "CHASING";
-            brain.thought = "Gotta close the gap! ⚡";
-            brain.boostTarget = true;
+          // AI follows the market trend with slight human-like hesitation / error rate
+          const shouldFlip = p2.stance !== activeTrend;
+          if (shouldFlip) {
+            // 90% chance to flip correctly after delay
+            if (Math.random() < 0.92) {
+              p2.stance = activeTrend;
+              brain.currentStance = activeTrend;
+              brain.thought = activeTrend === "LONG" ? "PUMP DETECTED! Flipping LONG! 🟢" : "DUMP DETECTED! Flipping SHORT! 🔴";
+            } else {
+              brain.thought = "Fakeout candle?! Hesitating... 🤔";
+            }
           } else {
-            brain.state = "ANALYZING";
-            brain.thought = "Pacing boost reserves... 👀";
-            brain.boostTarget = false;
+            brain.thought = activeTrend === "LONG" ? "Riding the Bull Surge! 🚀" : "Surfing the Bear Dump! 🐻";
           }
-
-          p2.isBoosting = brain.boostTarget;
           setAiThought(brain.thought);
         }
 
-        // UPDATE BOTH ROCKETS
-        [p1, p2].forEach((r) => {
-          // Check Stall Status
-          if (r.isStalled) {
-            r.isBoosting = false;
-            r.stallTimeLeft -= dt;
-            if (r.stallTimeLeft <= 0) {
-              r.isStalled = false;
-              r.fuel = 20; // Starts recovery
+        // SCORING ENGINE (Ticks every 100ms)
+        scoreAccumulator += dt;
+        if (scoreAccumulator >= 0.1) {
+          scoreAccumulator = 0;
+
+          [p1, p2].forEach((r, idx) => {
+            r.totalTicks += 1;
+            const laneX = idx === 0 ? width * 0.32 : width * 0.68;
+
+            if (r.stance === activeTrend) {
+              r.matchesTrend = true;
+              r.accuracyTicks += 1;
+
+              // Build Combo
+              r.combo = Math.min(3.0, Number((r.combo + 0.05).toFixed(2)));
+              const pointsEarned = Math.round(10 * r.combo);
+              r.score += pointsEarned;
+
+              // Spawn floaty score text occasionally
+              if (Math.random() < 0.25) {
+                floatingScoresRef.current.push({
+                  x: laneX + (Math.random() - 0.5) * 30,
+                  y: height * 0.54,
+                  text: `+${pointsEarned}`,
+                  color: r.stance === "LONG" ? "#10B981" : "#EF4444",
+                  alpha: 1.0,
+                  vy: -40,
+                });
+                if (idx === 0) soundEngine.playScoreTickSound();
+              }
+            } else {
+              r.matchesTrend = false;
+              // Reset Combo on mismatch
+              r.combo = 1.0;
             }
-          }
+          });
 
-          // Market Surf Detection (Pyth Oracle integration)
-          const marketFavors = (r.side === "BULL" && priceDeltaPercent > 0.01) || (r.side === "BEAR" && priceDeltaPercent < -0.01);
-          r.isSurfing = r.isBoosting && marketFavors;
+          // Sync Telemetry for React UI
+          setP1Telemetry({
+            score: p1.score,
+            combo: p1.combo,
+            stance: p1.stance,
+            matches: p1.matchesTrend,
+            accuracy: p1.totalTicks > 0 ? Math.round((p1.accuracyTicks / p1.totalTicks) * 100) : 100,
+          });
 
-          // Fuel Consumption & Regeneration
-          if (r.isBoosting && !r.isStalled) {
-            r.fuel = Math.max(0, r.fuel - 24 * dt);
-            if (r.fuel <= 0) {
-              r.isStalled = true;
-              r.stallTimeLeft = 1.3;
-              r.isBoosting = false;
-              soundEngine.playStallSound();
-            }
-          } else if (!r.isStalled && r.fuel < 100) {
-            r.fuel = Math.min(100, r.fuel + 32 * dt);
-          }
+          setP2Telemetry({
+            score: p2.score,
+            combo: p2.combo,
+            stance: p2.stance,
+            matches: p2.matchesTrend,
+            accuracy: p2.totalTicks > 0 ? Math.round((p2.accuracyTicks / p2.totalTicks) * 100) : 100,
+          });
+        }
 
-          // Thrust Forces
-          let targetAccel = 6.0; // Base ambient drift
-          if (r.isBoosting) {
-            // Surfing gives massive 2.2x speed boost + audio chirp
-            const boostMultiplier = r.isSurfing ? 2.2 : 1.35;
-            targetAccel += 42.0 * boostMultiplier;
-          }
-
-          // Market Tailwind / Headwind
-          const deltaMagnitude = Math.min(Math.abs(priceDeltaPercent), 1.5);
-          if (marketFavors) {
-            targetAccel += deltaMagnitude * 18.0; // Tailwind
-          } else {
-            targetAccel -= deltaMagnitude * 8.0; // Headwind drag
-          }
-
-          // Smooth velocity integration
-          r.velocity += (targetAccel - r.velocity) * Math.min(1, 4.5 * dt);
+        // UPDATE VELOCITY & ALTITUDE
+        [p1, p2].forEach((r, idx) => {
+          const laneX = idx === 0 ? width * 0.32 : width * 0.68;
+          const targetVel = r.matchesTrend ? 55 * r.combo : 15;
+          r.velocity += (targetVel - r.velocity) * Math.min(1, 5 * dt);
           r.altitude += r.velocity * dt;
 
-          // Exhaust Particles
-          if (r.isBoosting) {
-            const laneX = r === p1 ? width * 0.32 : width * 0.68;
-            for (let i = 0; i < (r.isSurfing ? 4 : 2); i++) {
-              particlesRef.current.push({
-                x: laneX + (Math.random() - 0.5) * 14,
-                y: height * 0.66 + 32,
-                vx: (Math.random() - 0.5) * 18,
-                vy: Math.random() * 45 + 50,
-                size: Math.random() * 5 + 3,
-                alpha: 0.9,
-                color: r.isSurfing ? (Math.random() < 0.5 ? "#F59E0B" : "#10B981") : r.flameColor,
-              });
-            }
-          }
-        });
-
-        // Sync telemetry to React state at ~20fps
-        setP1Telemetry({
-          altitude: Math.floor(p1.altitude),
-          fuel: Math.floor(p1.fuel),
-          isBoosting: p1.isBoosting,
-          isSurfing: p1.isSurfing,
-          isStalled: p1.isStalled,
-        });
-        setP2Telemetry({
-          altitude: Math.floor(p2.altitude),
-          fuel: Math.floor(p2.fuel),
-          isBoosting: p2.isBoosting,
-          isSurfing: p2.isSurfing,
-          isStalled: p2.isStalled,
+          // Exhaust particles
+          const color = r.stance === "LONG" ? "#10B981" : "#EF4444";
+          particlesRef.current.push({
+            x: laneX + (Math.random() - 0.5) * 12,
+            y: height * 0.62 + 28,
+            vx: (Math.random() - 0.5) * 16,
+            vy: Math.random() * 40 + 40,
+            size: Math.random() * 4 + 2,
+            alpha: 0.85,
+            color: r.matchesTrend ? color : "#94A3B8",
+          });
         });
       }
 
-      // 2. CANVAS RENDERING (Apple Light Mode Aesthetic)
+      // 2. CANVAS RENDERING
       ctx.clearRect(0, 0, width, height);
 
-      // Canvas Background (Subtle gradient)
+      // Background Gradient
       const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
-      bgGrad.addColorStop(0, "#F1F5F9");
-      bgGrad.addColorStop(1, "#FAFAF9");
+      bgGrad.addColorStop(0, "#F8FAFC");
+      bgGrad.addColorStop(1, "#F1F5F9");
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // Render Moving Stars / Speed Streaks (Scroll downwards to represent climb)
-      const avgVel = gameState === "playing" ? (p1Ref.current.velocity + p2Ref.current.velocity) / 2 : 12;
+      // Render Moving Starfield / Speed lines
+      const avgVel = gameState === "playing" ? (p1Ref.current.velocity + p2Ref.current.velocity) / 2 : 15;
       starsRef.current.forEach((s) => {
         s.y += (s.speed + avgVel * 0.08);
         if (s.y > height) {
@@ -513,11 +545,10 @@ export function RocketClashGame() {
           s.x = Math.random() * width;
         }
 
-        ctx.fillStyle = `rgba(100, 116, 139, ${s.opacity})`;
+        ctx.fillStyle = `rgba(148, 163, 184, ${s.opacity})`;
         ctx.beginPath();
-        // Stretch into speed line if moving fast
-        if (avgVel > 30) {
-          ctx.rect(s.x, s.y, s.size, s.size + avgVel * 0.25);
+        if (avgVel > 35) {
+          ctx.rect(s.x, s.y, s.size, s.size + avgVel * 0.22);
         } else {
           ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
         }
@@ -541,13 +572,13 @@ export function RocketClashGame() {
       ctx.fillText("LANE 1: YOU", width * 0.32, 28);
       ctx.fillText(gameMode === "solo" ? "LANE 2: MEMEBOT AI" : "LANE 2: RIVAL", width * 0.68, 28);
 
-      // Render Exhaust Particles
+      // Update & Render Particles
       for (let i = particlesRef.current.length - 1; i >= 0; i--) {
         const p = particlesRef.current[i];
         p.x += p.vx * dt;
         p.y += p.vy * dt;
-        p.alpha -= 1.8 * dt;
-        p.size = Math.max(0.5, p.size - 3 * dt);
+        p.alpha -= 2.0 * dt;
+        p.size = Math.max(0.5, p.size - 2.5 * dt);
 
         if (p.alpha <= 0) {
           particlesRef.current.splice(i, 1);
@@ -562,74 +593,92 @@ export function RocketClashGame() {
       }
       ctx.globalAlpha = 1.0;
 
-      // Draw Vertical Rocket Sprites
-      const renderSurfRocket = (r: SurfRocket, laneX: number) => {
-        // Vertical position is dynamic: if ahead, rocket climbs towards y=160; if behind, drops towards y=300
-        const altDelta = r === p1Ref.current 
-          ? (p1Ref.current.altitude - p2Ref.current.altitude)
-          : (p2Ref.current.altitude - p1Ref.current.altitude);
-        
-        const clampedDelta = Math.max(-100, Math.min(100, altDelta));
-        const rocketY = (height * 0.58) - (clampedDelta * 1.2);
+      // Update & Render Floating Score Badges (+10, +20, etc.)
+      for (let i = floatingScoresRef.current.length - 1; i >= 0; i--) {
+        const fs = floatingScoresRef.current[i];
+        fs.y += fs.vy * dt;
+        fs.alpha -= 1.6 * dt;
+
+        if (fs.alpha <= 0) {
+          floatingScoresRef.current.splice(i, 1);
+          continue;
+        }
+
+        ctx.font = "bold 13px system-ui, sans-serif";
+        ctx.fillStyle = fs.color;
+        ctx.globalAlpha = fs.alpha;
+        ctx.textAlign = "center";
+        ctx.fillText(fs.text, fs.x, fs.y);
+      }
+      ctx.globalAlpha = 1.0;
+
+      // Draw Surfer Rocket Sprites
+      const renderSurferRocket = (r: SurferRocket, laneX: number) => {
+        // Vertical dynamic altitude tilt: leader moves slightly higher
+        const scoreDelta = r === p1Ref.current ? (p1Ref.current.score - p2Ref.current.score) : (p2Ref.current.score - p1Ref.current.score);
+        const clampedDelta = Math.max(-120, Math.min(120, scoreDelta));
+        const rocketY = height * 0.6 - (clampedDelta * 0.5);
 
         ctx.save();
         ctx.translate(laneX, rocketY);
 
-        // Surfing Aura Glow
-        if (r.isSurfing) {
-          ctx.strokeStyle = "rgba(245, 158, 11, 0.4)";
+        const isLong = r.stance === "LONG";
+        const mainColor = isLong ? "#10B981" : "#EF4444";
+        const accentColor = isLong ? "#059669" : "#DC2626";
+
+        // Matching Aura Glow
+        if (r.matchesTrend) {
+          ctx.strokeStyle = isLong ? "rgba(16, 185, 129, 0.45)" : "rgba(239, 68, 68, 0.45)";
           ctx.lineWidth = 4;
           ctx.beginPath();
-          ctx.ellipse(0, 0, 32, 48, 0, 0, Math.PI * 2);
+          ctx.ellipse(0, 0, 34, 48, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // Thruster Flame
-        if (r.isBoosting) {
-          ctx.fillStyle = r.isSurfing ? "#F59E0B" : r.flameColor;
-          ctx.beginPath();
-          ctx.moveTo(-10, 26);
-          ctx.lineTo(0, 48 + Math.random() * 16);
-          ctx.lineTo(10, 26);
-          ctx.closePath();
-          ctx.fill();
-
-          // Inner white flame core
-          ctx.fillStyle = "#FFFFFF";
-          ctx.beginPath();
-          ctx.moveTo(-5, 26);
-          ctx.lineTo(0, 38 + Math.random() * 8);
-          ctx.lineTo(5, 26);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        // Rocket Main Fuselage
-        ctx.fillStyle = r.color;
+        // Thruster Flames
+        ctx.fillStyle = mainColor;
         ctx.beginPath();
-        ctx.moveTo(0, -34); // Nosecone tip
-        ctx.quadraticCurveTo(18, -10, 15, 24); // Right body
-        ctx.lineTo(-15, 24); // Bottom base
-        ctx.quadraticCurveTo(-18, -10, 0, -34); // Left body
+        ctx.moveTo(-10, 24);
+        ctx.lineTo(0, 44 + Math.random() * (r.matchesTrend ? 18 : 8));
+        ctx.lineTo(10, 24);
+        ctx.closePath();
+        ctx.fill();
+
+        // Inner white flame core
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath();
+        ctx.moveTo(-5, 24);
+        ctx.lineTo(0, 34 + Math.random() * 8);
+        ctx.lineTo(5, 24);
+        ctx.closePath();
+        ctx.fill();
+
+        // Rocket Fuselage
+        ctx.fillStyle = mainColor;
+        ctx.beginPath();
+        ctx.moveTo(0, -32); // Tip
+        ctx.quadraticCurveTo(18, -8, 14, 24);
+        ctx.lineTo(-14, 24);
+        ctx.quadraticCurveTo(-18, -8, 0, -32);
         ctx.closePath();
         ctx.fill();
         ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Rocket Wings
-        ctx.fillStyle = r.flameColor;
+        // Fins (Horns for Bull / Spikes for Bear)
+        ctx.fillStyle = accentColor;
         ctx.beginPath();
-        ctx.moveTo(-15, 12);
-        ctx.lineTo(-26, 26);
-        ctx.lineTo(-14, 26);
+        ctx.moveTo(-14, 10);
+        ctx.lineTo(-24, 24);
+        ctx.lineTo(-12, 24);
         ctx.closePath();
         ctx.fill();
 
         ctx.beginPath();
-        ctx.moveTo(15, 12);
-        ctx.lineTo(26, 26);
-        ctx.lineTo(14, 26);
+        ctx.moveTo(14, 10);
+        ctx.lineTo(24, 24);
+        ctx.lineTo(12, 24);
         ctx.closePath();
         ctx.fill();
 
@@ -638,70 +687,67 @@ export function RocketClashGame() {
         ctx.beginPath();
         ctx.arc(0, -2, 10, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
         ctx.stroke();
 
         ctx.font = "13px sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(r.avatar, 0, 3);
 
-        // NITRO FUEL GAUGE (Floating below rocket)
-        const gaugeW = 44;
-        const gaugeH = 4;
-        ctx.fillStyle = "rgba(0, 0, 0, 0.12)";
-        ctx.fillRect(-gaugeW / 2, 34, gaugeW, gaugeH);
+        // Active Stance Pill Badge above Rocket
+        ctx.fillStyle = mainColor;
+        ctx.beginPath();
+        ctx.roundRect(-42, -58, 84, 20, 10);
+        ctx.fill();
 
-        const fuelW = (r.fuel / 100) * gaugeW;
-        ctx.fillStyle = r.isStalled ? "#EF4444" : r.fuel < 25 ? "#F59E0B" : "#10B981";
-        ctx.fillRect(-gaugeW / 2, 34, fuelW, gaugeH);
+        ctx.font = "bold 10px system-ui, sans-serif";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText(isLong ? "🟢 LONG (SUBE)" : "🔴 SHORT (BAJA)", 0, -44);
 
-        // Altitude Tag Badge
+        // Matching indicator star
+        if (r.matchesTrend) {
+          ctx.font = "bold 11px system-ui, sans-serif";
+          ctx.fillStyle = "#F59E0B";
+          ctx.fillText(`🔥 ${r.combo.toFixed(1)}x COMBO`, 0, -66);
+        } else {
+          ctx.font = "bold 9px system-ui, sans-serif";
+          ctx.fillStyle = "#94A3B8";
+          ctx.fillText("MISMATCH (0 pts)", 0, -66);
+        }
+
+        // Floating Score Pill below Rocket
         ctx.fillStyle = "#FFFFFF";
         ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(-36, -58, 72, 18, 5);
+        ctx.roundRect(-45, 34, 90, 20, 6);
         ctx.fill();
         ctx.stroke();
 
-        ctx.font = "bold 10px monospace";
+        ctx.font = "bold 11px monospace";
         ctx.fillStyle = "#0F172A";
-        ctx.fillText(`${Math.floor(r.altitude)}m`, 0, -45);
-
-        // Stalled Warning Banner
-        if (r.isStalled) {
-          ctx.fillStyle = "#EF4444";
-          ctx.font = "bold 9px system-ui, sans-serif";
-          ctx.fillText("⚠️ STALLED", 0, -64);
-        }
-
-        // Surfing Label
-        if (r.isSurfing) {
-          ctx.fillStyle = "#D97706";
-          ctx.font = "bold 9px system-ui, sans-serif";
-          ctx.fillText("🌊 SURF 2X", 0, -64);
-        }
+        ctx.fillText(`${r.score} PTS`, 0, 48);
 
         ctx.restore();
       };
 
-      renderSurfRocket(p1Ref.current, width * 0.32);
-      renderSurfRocket(p2Ref.current, width * 0.68);
+      renderSurferRocket(p1Ref.current, width * 0.32);
+      renderSurferRocket(p2Ref.current, width * 0.68);
 
       // AI Thought Bubble over AI Rocket
       if (gameMode === "solo" && gameState === "playing") {
         const brain = aiBrainRef.current;
         const aiLaneX = width * 0.68;
-        const aiY = height * 0.38;
+        const aiY = height * 0.34;
 
         ctx.save();
         ctx.fillStyle = "#FFFFFF";
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.14)";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
         ctx.lineWidth = 1.2;
         ctx.shadowColor = "rgba(0, 0, 0, 0.08)";
         ctx.shadowBlur = 8;
         ctx.beginPath();
-        ctx.roundRect(aiLaneX - 85, aiY - 26, 170, 24, 12);
+        ctx.roundRect(aiLaneX - 90, aiY - 24, 180, 24, 12);
         ctx.fill();
         ctx.stroke();
 
@@ -709,23 +755,23 @@ export function RocketClashGame() {
         ctx.font = "bold 10px system-ui, sans-serif";
         ctx.fillStyle = "#1E293B";
         ctx.textAlign = "center";
-        ctx.fillText(brain.thought, aiLaneX, aiY - 10);
+        ctx.fillText(brain.thought, aiLaneX, aiY - 8);
         ctx.restore();
       }
 
       // Countdown Screen Overlay
       if (gameState === "countdown") {
-        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
         ctx.fillRect(0, 0, width, height);
 
         ctx.font = "bold 56px system-ui, sans-serif";
         ctx.fillStyle = "#6E4EF4";
         ctx.textAlign = "center";
-        ctx.fillText(countdown > 0 ? String(countdown) : "LAUNCH!", width * 0.5, height * 0.52);
+        ctx.fillText(countdown > 0 ? String(countdown) : "SURF!", width * 0.5, height * 0.52);
 
         ctx.font = "bold 14px system-ui, sans-serif";
         ctx.fillStyle = "#475569";
-        ctx.fillText("Hold [SPACE] or Tap Boost to ignite Nitro!", width * 0.5, height * 0.62);
+        ctx.fillText("Match the market trend to stack combos!", width * 0.5, height * 0.62);
       }
 
       animFrameId.current = requestAnimationFrame(render);
@@ -733,28 +779,11 @@ export function RocketClashGame() {
 
     animFrameId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameId.current);
-  }, [gameState, gameMode, selectedAsset, selectedDuration, countdown, timeLeft]);
+  }, [gameState, gameMode, selectedAsset]);
 
-  // Touch & Mobile Press Handlers for P1
-  const handleP1PressStart = () => {
-    if (gameState !== "playing") return;
-    const p1 = p1Ref.current;
-    if (!p1.isStalled && p1.fuel > 5) {
-      p1.isBoosting = true;
-      soundEngine.startThrust(true);
-    }
-  };
-
-  const handleP1PressEnd = () => {
-    p1Ref.current.isBoosting = false;
-    soundEngine.stopThrust();
-  };
-
-  // Price delta helpers
+  // Price delta helper
   const priceDelta = strikePrice > 0 ? currentPrice - strikePrice : 0;
   const priceDeltaPercent = strikePrice > 0 ? (priceDelta / strikePrice) * 100 : 0;
-  const marketIsBull = priceDeltaPercent > 0.01;
-  const marketIsBear = priceDeltaPercent < -0.01;
 
   return (
     <div className="flex flex-col items-center w-full max-w-5xl mx-auto px-4 py-6 font-sans select-none">
@@ -810,12 +839,26 @@ export function RocketClashGame() {
           </div>
         </div>
 
-        {/* Live Market Tailwind Indicator */}
+        {/* Live Market Momentum Badge */}
         <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
           <div className="text-right">
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Atmospheric Wind</div>
-            <div className={`text-xs font-bold ${marketIsBull ? "text-emerald-600" : marketIsBear ? "text-red-500" : "text-slate-600"}`}>
-              {marketIsBull ? "🟢 Bull Tailwind (+Surf Bonus)" : marketIsBear ? "🔴 Bear Tailwind (+Surf Bonus)" : "⚪ Neutral Air"}
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Market Trend</div>
+            <div
+              className={`text-xs font-bold flex items-center gap-1 ${
+                priceDeltaPercent >= 0 ? "text-emerald-600" : "text-red-500"
+              }`}
+            >
+              {priceDeltaPercent >= 0 ? (
+                <>
+                  <ArrowUpRight className="w-4 h-4" />
+                  <span>🟢 PUMPING (Longs Score)</span>
+                </>
+              ) : (
+                <>
+                  <ArrowDownRight className="w-4 h-4" />
+                  <span>🔴 DUMPING (Shorts Score)</span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -846,7 +889,7 @@ export function RocketClashGame() {
               }`}
             >
               <User className="w-3.5 h-3.5" />
-              <span>Solo vs AI Rival</span>
+              <span>Solo vs MemeBot AI</span>
             </button>
             <button
               onClick={() => setGameMode("versus")}
@@ -857,31 +900,7 @@ export function RocketClashGame() {
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>Local 1v1 Clash</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Your Role:</span>
-            <button
-              onClick={() => setPlayerSide("BULL")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                playerSide === "BULL"
-                  ? "bg-emerald-600 text-white shadow-sm"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              <span>🐂 BULL (Long)</span>
-            </button>
-            <button
-              onClick={() => setPlayerSide("BEAR")}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                playerSide === "BEAR"
-                  ? "bg-red-600 text-white shadow-sm"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              <span>🐻 BEAR (Short)</span>
+              <span>Local 2P Reflex Clash</span>
             </button>
           </div>
 
@@ -907,7 +926,7 @@ export function RocketClashGame() {
             className="px-6 py-2.5 rounded-xl bg-[#6E4EF4] text-white font-bold text-sm shadow-[0_2px_10px_rgba(110,78,244,0.3)] hover:bg-[#5b3ce0] active:scale-95 transition-all flex items-center gap-2 ml-auto"
           >
             <Zap className="w-4 h-4 fill-current" />
-            <span>ENTER DUEL (0.25 MON)</span>
+            <span>START DUEL (0.25 MON)</span>
           </button>
         </div>
       )}
@@ -937,30 +956,30 @@ export function RocketClashGame() {
             </div>
 
             <h2 className="text-2xl font-bold text-slate-900 mb-1">
-              {winner === "P1" ? "VICTORY! YOU OUT-CLIMBED THE RIVAL" : winner === "DRAW" ? "DEAD HEAT TIE!" : "MEMEBOT AI WINS"}
+              {winner === "P1" ? "VICTORY! YOU OUT-PREDICTED THE RIVAL" : winner === "DRAW" ? "DEAD HEAT TIE!" : "MEMEBOT AI WINS"}
             </h2>
 
             <p className="text-xs text-slate-500 max-w-sm mb-4">
               {winner === "P1"
-                ? `You reached ${p1Telemetry.altitude}m vs rival's ${p2Telemetry.altitude}m. Escrow payout ready!`
+                ? `You scored ${p1Telemetry.score} pts (${p1Telemetry.accuracy}% accuracy) vs rival's ${p2Telemetry.score} pts.`
                 : winner === "DRAW"
-                ? "Both rockets tied in altitude. Full escrow stake refunded."
-                : `AI reached ${p2Telemetry.altitude}m vs your ${p1Telemetry.altitude}m.`}
+                ? "Both players matched exact scores. Full escrow refunded."
+                : `AI scored ${p2Telemetry.score} pts (${p2Telemetry.accuracy}% accuracy) vs your ${p1Telemetry.score} pts.`}
             </p>
 
             <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.06] mb-5 flex items-center gap-6 text-xs font-mono">
               <div>
-                <span className="text-slate-400 block text-[10px]">YOUR ALTITUDE</span>
-                <span className="font-bold text-slate-900 text-sm">{p1Telemetry.altitude}m</span>
+                <span className="text-slate-400 block text-[10px]">YOUR SCORE</span>
+                <span className="font-bold text-slate-900 text-sm">{p1Telemetry.score} pts</span>
               </div>
               <div className="h-6 w-px bg-slate-200" />
               <div>
-                <span className="text-slate-400 block text-[10px]">RIVAL ALTITUDE</span>
-                <span className="font-bold text-slate-900 text-sm">{p2Telemetry.altitude}m</span>
+                <span className="text-slate-400 block text-[10px]">RIVAL SCORE</span>
+                <span className="font-bold text-slate-900 text-sm">{p2Telemetry.score} pts</span>
               </div>
               <div className="h-6 w-px bg-slate-200" />
               <div>
-                <span className="text-slate-400 block text-[10px]">NET PAYOUT</span>
+                <span className="text-slate-400 block text-[10px]">NET ESCROW PAYOUT</span>
                 <span className="font-bold text-[#6E4EF4] text-sm">
                   {winner === "P1" ? `${(stakeMon * 2 * 0.965).toFixed(4)} MON` : "0.00 MON"}
                 </span>
@@ -986,106 +1005,151 @@ export function RocketClashGame() {
         )}
       </div>
 
-      {/* 5. Player Controls & Nitro HUD */}
-      <div className="w-full mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* P1 Primary Controls */}
-        <button
-          onPointerDown={handleP1PressStart}
-          onPointerUp={handleP1PressEnd}
-          onPointerLeave={handleP1PressEnd}
-          disabled={gameState !== "playing" || p1Telemetry.isStalled}
-          className={`relative group p-4 rounded-2xl bg-white border transition-all flex items-center justify-between shadow-[0_2px_10px_rgba(0,0,0,0.035)] cursor-pointer touch-none ${
-            p1Telemetry.isStalled
-              ? "border-red-300 bg-red-50/50 cursor-not-allowed"
-              : p1Telemetry.isSurfing
-              ? "border-amber-400 bg-amber-50/40 ring-2 ring-amber-400/20"
-              : p1Telemetry.isBoosting
-              ? "border-[#6E4EF4] bg-[#6E4EF4]/5"
-              : "border-black/[0.06] hover:border-black/[0.12] active:scale-[0.98]"
-          }`}
-        >
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl transition-transform ${
-                p1Telemetry.isBoosting ? "scale-110" : ""
-              } ${p1Telemetry.isSurfing ? "bg-amber-100 text-amber-700" : "bg-[#6E4EF4]/10 text-[#6E4EF4]"}`}
-            >
-              {p1Telemetry.isSurfing ? "⚡" : p1Telemetry.isStalled ? "⚠️" : p1Ref.current.avatar}
-            </div>
-            <div className="text-left">
-              <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                <span>P1 ({p1Ref.current.side}) • HOLD NITRO BOOST</span>
-                {p1Telemetry.isSurfing && <span className="text-amber-600 text-[10px] font-bold">SURFING 2X!</span>}
-                {p1Telemetry.isStalled && <span className="text-red-500 text-[10px] font-bold">STALLED (COOLING)</span>}
-              </div>
-              <div className="text-xs font-mono text-slate-500 mt-0.5">
-                HOLD [SPACE] / TAP • Fuel: {p1Telemetry.fuel}% • Altitude: {p1Telemetry.altitude}m
-              </div>
-            </div>
+      {/* 5. Real-Time Stance Switch Buttons (The Core Gameplay!) */}
+      <div className="w-full mt-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between px-1">
+          <div className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+            <Flame className="w-4 h-4 text-[#6E4EF4]" />
+            <span>Switch Stance in Real Time (Hotkeys: [A / ←] & [D / →] or [SPACE] to toggle)</span>
           </div>
+          <div className="text-xs font-mono text-slate-500">
+            Score: <span className="font-bold text-slate-900">{p1Telemetry.score} pts</span> • Combo:{" "}
+            <span className="font-bold text-[#6E4EF4]">{p1Telemetry.combo.toFixed(1)}x</span>
+          </div>
+        </div>
 
-          <Flame
-            className={`w-6 h-6 transition-transform ${
-              p1Telemetry.isSurfing
-                ? "text-amber-500 scale-125"
-                : p1Telemetry.isBoosting
-                ? "text-[#6E4EF4] scale-125"
-                : "text-slate-400"
-            }`}
-          />
-        </button>
-
-        {/* Rival Status Card / P2 Controls */}
-        {gameMode === "versus" ? (
+        <div className="grid grid-cols-2 gap-3">
+          {/* SUBE / LONG BUTTON */}
           <button
-            onPointerDown={() => {
-              if (gameState !== "playing") return;
-              p2Ref.current.isBoosting = true;
-              soundEngine.startThrust(false);
-            }}
-            onPointerUp={() => {
-              p2Ref.current.isBoosting = false;
-              soundEngine.stopThrust();
-            }}
-            disabled={gameState !== "playing" || p2Telemetry.isStalled}
-            className={`p-4 rounded-2xl bg-white border transition-all flex items-center justify-between shadow-sm touch-none ${
-              p2Telemetry.isBoosting ? "border-red-400 bg-red-50/40" : "border-black/[0.06]"
+            onClick={() => switchP1Stance("LONG")}
+            disabled={gameState !== "playing"}
+            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
+              p1Telemetry.stance === "LONG"
+                ? "bg-emerald-500/10 border-emerald-500 ring-2 ring-emerald-500/20 shadow-md"
+                : "bg-white border-black/[0.08] hover:border-black/[0.15] opacity-75"
             }`}
           >
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-red-50 flex items-center justify-center text-2xl">
-                {p2Ref.current.avatar}
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
+                  p1Telemetry.stance === "LONG"
+                    ? "bg-emerald-600 text-white shadow-sm scale-105"
+                    : "bg-slate-100 text-slate-500"
+                }`}
+              >
+                🟢
               </div>
               <div className="text-left">
-                <div className="text-xs font-bold text-slate-900">P2 ({p2Ref.current.side}) • HOLD NITRO BOOST</div>
-                <div className="text-xs font-mono text-slate-500">
-                  HOLD [ARROW UP] • Fuel: {p2Telemetry.fuel}% • Alt: {p2Telemetry.altitude}m
-                </div>
-              </div>
-            </div>
-            <Flame className="w-6 h-6 text-red-500" />
-          </button>
-        ) : (
-          <div className="p-4 rounded-2xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-slate-200 flex items-center justify-center text-2xl">
-                🤖
-              </div>
-              <div>
-                <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                  <span>MemeBot AI ({p2Ref.current.side})</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
-                    FSM BRAIN
-                  </span>
+                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>SUBE (LONG)</span>
+                  {p1Telemetry.stance === "LONG" && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
+                      ACTIVE
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  Alt: {p2Telemetry.altitude}m • Fuel: {p2Telemetry.fuel}% • Status: {aiThought}
+                  Press [A] or [←] • Scores during Bull Ticks
                 </div>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-[10px] font-semibold text-slate-400">REACTION</div>
-              <div className="text-xs font-mono font-bold text-slate-700">220ms</div>
+
+            <ArrowUpRight
+              className={`w-6 h-6 transition-transform ${
+                p1Telemetry.stance === "LONG" ? "text-emerald-600 scale-125" : "text-slate-400"
+              }`}
+            />
+          </button>
+
+          {/* BAJA / SHORT BUTTON */}
+          <button
+            onClick={() => switchP1Stance("SHORT")}
+            disabled={gameState !== "playing"}
+            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
+              p1Telemetry.stance === "SHORT"
+                ? "bg-red-500/10 border-red-500 ring-2 ring-red-500/20 shadow-md"
+                : "bg-white border-black/[0.08] hover:border-black/[0.15] opacity-75"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
+                  p1Telemetry.stance === "SHORT"
+                    ? "bg-red-600 text-white shadow-sm scale-105"
+                    : "bg-slate-100 text-slate-500"
+                }`}
+              >
+                🔴
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>BAJA (SHORT)</span>
+                  {p1Telemetry.stance === "SHORT" && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-semibold">
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-slate-500 font-mono mt-0.5">
+                  Press [D] or [→] • Scores during Bear Dumps
+                </div>
+              </div>
+            </div>
+
+            <ArrowDownRight
+              className={`w-6 h-6 transition-transform ${
+                p1Telemetry.stance === "SHORT" ? "text-red-600 scale-125" : "text-slate-400"
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Rival Stance Indicator / Versus Controls */}
+        {gameMode === "versus" ? (
+          <div className="grid grid-cols-2 gap-3 mt-1">
+            <button
+              onClick={() => switchP2Stance("LONG")}
+              disabled={gameState !== "playing"}
+              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                p2Telemetry.stance === "LONG"
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                  : "bg-white border-black/[0.08] text-slate-600"
+              }`}
+            >
+              <span>P2: SUBE [↑]</span>
+            </button>
+            <button
+              onClick={() => switchP2Stance("SHORT")}
+              disabled={gameState !== "playing"}
+              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                p2Telemetry.stance === "SHORT"
+                  ? "bg-red-600 text-white border-red-600 shadow-sm"
+                  : "bg-white border-black/[0.08] text-slate-600"
+              }`}
+            >
+              <span>P2: BAJA [↓]</span>
+            </button>
+          </div>
+        ) : (
+          <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.04] flex items-center justify-between mt-1">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center text-base">
+                🤖
+              </div>
+              <div className="text-xs">
+                <span className="font-bold text-slate-900">MemeBot AI Stance: </span>
+                <span
+                  className={`font-mono font-bold px-2 py-0.5 rounded ${
+                    p2Telemetry.stance === "LONG" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
+                  }`}
+                >
+                  {p2Telemetry.stance === "LONG" ? "🟢 SUBE (LONG)" : "🔴 BAJA (SHORT)"}
+                </span>
+                <span className="text-slate-500 ml-2 font-mono">• Score: {p2Telemetry.score} pts</span>
+              </div>
+            </div>
+            <div className="text-xs font-mono text-slate-500 italic">
+              &quot;{aiThought}&quot;
             </div>
           </div>
         )}
@@ -1096,30 +1160,30 @@ export function RocketClashGame() {
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            Pyth Market Wave Surfing
+            Zero Paradojas (Reflex Score)
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Time your Nitro when Pyth flashes a favorable price tick to trigger a 2.2x Surge Bonus and golden exhaust!
+            Cambia entre SUBE y BAJA tantas veces como quieras. Gana quien acumule más puntos acertando los ticks de Pyth.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Gauge className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            Nitro Fuel Management
+            <Flame className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            Multiplicador de Racha (x3)
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Holding burns fuel fast. If you run out, your engine stalls! Release boost strategically to recharge.
+            Mantener la postura correcta encadena combos de hasta x3. Si el mercado se da vuelta y no reaccionas, pierdes la racha.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Percent className="w-3.5 h-3.5 text-emerald-600" />
-            3.5% Protocol Fee
+            3.5% Protocol Fee (Garantizado)
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            0.50 MON total escrow. 3.5% (0.0175 MON) protocol fee deposited into the Treasury on every duel.
+            Pozo P2P de 0.50 MON. 0.0175 MON para la tesorería de Duelio en cada partida. 100% solvente y rentable.
           </p>
         </div>
       </div>
