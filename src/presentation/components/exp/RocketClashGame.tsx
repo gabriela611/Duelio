@@ -11,45 +11,59 @@ import {
   Users,
   User,
   ArrowLeft,
-  TrendingUp,
-  TrendingDown,
-  Radio,
-  Clock,
   Coins,
   Shield,
   Percent,
-  Sparkles,
   Flame,
-  ArrowUpRight,
-  ArrowDownRight,
+  Radio,
+  Clock,
+  Sparkles,
+  Award,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 
-type Stance = "LONG" | "SHORT";
-
-interface SurferRocket {
-  altitude: number;
-  velocity: number;
-  score: number;
-  combo: number;
-  stance: Stance;
-  matchesTrend: boolean;
-  accuracyTicks: number;
-  totalTicks: number;
-  name: string;
-  avatar: string;
+// Deterministic PRNG (Mulberry32) to generate identical seeded tracks (Skillz model)
+function mulberry32(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-interface FloatingScore {
+interface ObstaclePipe {
+  id: number;
+  x: number;
+  topHeight: number;
+  gapHeight: number;
+  width: number;
+  hasCoin: boolean;
+  coinY: number;
+  coinCollectedP1: boolean;
+  coinCollectedP2: boolean;
+  passedP1: boolean;
+  passedP2: boolean;
+  isBullish: boolean;
+}
+
+interface FlappyRocket {
   x: number;
   y: number;
-  text: string;
-  color: string;
-  alpha: number;
   vy: number;
+  tilt: number;
+  isDead: boolean;
+  score: number;
+  pipesCleared: number;
+  coinsCollected: number;
+  distanceTraveled: number;
+  name: string;
+  avatar: string;
+  color: string;
+  flameColor: string;
 }
 
 interface Particle {
@@ -62,19 +76,11 @@ interface Particle {
   color: string;
 }
 
-interface Star {
+interface CoinSparkle {
   x: number;
   y: number;
-  size: number;
-  speed: number;
-  opacity: number;
-}
-
-interface AIBrain {
-  currentStance: Stance;
-  lastReactionTime: number;
-  thought: string;
-  reactionDelayMs: number;
+  alpha: number;
+  text: string;
 }
 
 export function RocketClashGame() {
@@ -85,100 +91,59 @@ export function RocketClashGame() {
   const priceState = usePriceStream(selectedAsset);
   const { currentPrice, isLive } = priceState;
 
-  // Game configuration & round state
+  // Game Settings & State
   const [gameMode, setGameMode] = useState<"solo" | "versus">("solo");
   const [stakeMon, setStakeMon] = useState<number>(0.25);
   const [gameState, setGameState] = useState<"idle" | "countdown" | "playing" | "gameover">("idle");
   const [countdown, setCountdown] = useState<number>(3);
-  const [timeLeft, setTimeLeft] = useState<number>(20);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [matchSeed, setMatchSeed] = useState<number>(1337);
   const [winner, setWinner] = useState<"P1" | "P2" | "DRAW" | null>(null);
 
-  // Price history and momentum tracking
-  const [strikePrice, setStrikePrice] = useState<number>(currentPrice);
-  const strikePriceRef = useRef<number>(currentPrice);
-  const currentPriceRef = useRef<number>(currentPrice);
-  const prevPriceRef = useRef<number>(currentPrice);
-  const momentumRef = useRef<"PUMP" | "DUMP" | "FLAT">("FLAT");
-  const [marketMomentum, setMarketMomentum] = useState<"PUMP" | "DUMP" | "FLAT">("FLAT");
-
-  useEffect(() => {
-    const prev = currentPriceRef.current;
-    currentPriceRef.current = currentPrice;
-    prevPriceRef.current = prev;
-
-    if (gameState === "idle") {
-      setStrikePrice(currentPrice);
-      strikePriceRef.current = currentPrice;
-    }
-
-    if (currentPrice > prev + 0.0001) {
-      momentumRef.current = "PUMP";
-      setMarketMomentum("PUMP");
-    } else if (currentPrice < prev - 0.0001) {
-      momentumRef.current = "DUMP";
-      setMarketMomentum("DUMP");
-    }
-  }, [currentPrice, gameState]);
-
   // Live HUD telemetry
-  const [p1Telemetry, setP1Telemetry] = useState({
-    score: 0,
-    combo: 1.0,
-    stance: "LONG" as Stance,
-    matches: false,
-    accuracy: 100,
-  });
-  const [p2Telemetry, setP2Telemetry] = useState({
-    score: 0,
-    combo: 1.0,
-    stance: "SHORT" as Stance,
-    matches: false,
-    accuracy: 100,
-  });
-  const [aiThought, setAiThought] = useState<string>("Analyzing trend momentum... 📊");
+  const [p1Telemetry, setP1Telemetry] = useState({ score: 0, pipes: 0, coins: 0, isDead: false });
+  const [p2Telemetry, setP2Telemetry] = useState({ score: 0, pipes: 0, coins: 0, isDead: false });
 
-  // Physics & Animation references
+  // Physics References
   const animFrameId = useRef<number>(0);
-  const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
   const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const worldSpeedRef = useRef<number>(2.4);
 
-  const p1Ref = useRef<SurferRocket>({
-    altitude: 0,
-    velocity: 15,
+  const p1Ref = useRef<FlappyRocket>({
+    x: 120,
+    y: 220,
+    vy: 0,
+    tilt: 0,
+    isDead: false,
     score: 0,
-    combo: 1.0,
-    stance: "LONG",
-    matchesTrend: false,
-    accuracyTicks: 0,
-    totalTicks: 0,
+    pipesCleared: 0,
+    coinsCollected: 0,
+    distanceTraveled: 0,
     name: "Gmonad Alpha",
     avatar: "🟣",
+    color: "#836EF9",
+    flameColor: "#FF6B00",
   });
 
-  const p2Ref = useRef<SurferRocket>({
-    altitude: 0,
-    velocity: 15,
+  const p2Ref = useRef<FlappyRocket>({
+    x: 160,
+    y: 220,
+    vy: 0,
+    tilt: 0,
+    isDead: false,
     score: 0,
-    combo: 1.0,
-    stance: "SHORT",
-    matchesTrend: false,
-    accuracyTicks: 0,
-    totalTicks: 0,
+    pipesCleared: 0,
+    coinsCollected: 0,
+    distanceTraveled: 0,
     name: "MemeBot AI",
     avatar: "🤖",
+    color: "#10B981",
+    flameColor: "#059669",
   });
 
-  const aiBrainRef = useRef<AIBrain>({
-    currentStance: "SHORT",
-    lastReactionTime: 0,
-    thought: "Analyzing trend momentum... 📊",
-    reactionDelayMs: 320,
-  });
-
+  const pipesRef = useRef<ObstaclePipe[]>([]);
   const particlesRef = useRef<Particle[]>([]);
-  const floatingScoresRef = useRef<FloatingScore[]>([]);
-  const starsRef = useRef<Star[]>([]);
+  const coinSparklesRef = useRef<CoinSparkle[]>([]);
 
   // Sound toggle
   const toggleSound = () => {
@@ -187,146 +152,135 @@ export function RocketClashGame() {
     soundEngine.setMuted(next);
   };
 
-  // Generate background stars
-  useEffect(() => {
-    const stars: Star[] = [];
-    for (let i = 0; i < 40; i++) {
-      stars.push({
-        x: Math.random() * 880,
-        y: Math.random() * 480,
-        size: Math.random() * 2 + 1,
-        speed: Math.random() * 1.5 + 0.5,
-        opacity: Math.random() * 0.4 + 0.2,
+  // Generate Seeded Track (Deterministic Obstacle Course)
+  const generateCourse = useCallback((seed: number) => {
+    const prng = mulberry32(seed);
+    const pipes: ObstaclePipe[] = [];
+    const totalPipes = 35;
+    const startX = 480;
+    const spacing = 240;
+    const pipeWidth = 54;
+    const gapHeight = 138;
+
+    for (let i = 0; i < totalPipes; i++) {
+      // Top height between 60 and 260px
+      const topHeight = Math.floor(prng() * 190) + 60;
+      const isBullish = prng() > 0.5;
+      const hasCoin = prng() > 0.35; // 65% of gaps have collectible Monad coin
+
+      pipes.push({
+        id: i + 1,
+        x: startX + i * spacing,
+        topHeight,
+        gapHeight,
+        width: pipeWidth,
+        hasCoin,
+        coinY: topHeight + gapHeight * 0.5,
+        coinCollectedP1: false,
+        coinCollectedP2: false,
+        passedP1: false,
+        passedP2: false,
+        isBullish,
       });
     }
-    starsRef.current = stars;
+
+    pipesRef.current = pipes;
   }, []);
 
-  // Stance Switch Action (P1)
-  const switchP1Stance = useCallback((newStance: Stance) => {
-    if (gameState !== "playing") return;
-    if (p1Ref.current.stance === newStance) return;
+  // Player 1 Flap Action
+  const handleP1Flap = useCallback(() => {
+    if (gameState !== "playing" || p1Ref.current.isDead) return;
+    p1Ref.current.vy = -6.8;
+    soundEngine.playFlapSound();
 
-    p1Ref.current.stance = newStance;
-    soundEngine.playStanceSwitchSound(newStance === "LONG");
-
-    // Push switch particle burst
-    const laneX = 880 * 0.32;
-    for (let i = 0; i < 14; i++) {
+    // Spawn mini thrust puff
+    for (let i = 0; i < 6; i++) {
       particlesRef.current.push({
-        x: laneX + (Math.random() - 0.5) * 20,
-        y: 280,
-        vx: (Math.random() - 0.5) * 40,
-        vy: (Math.random() - 0.5) * 40,
+        x: p1Ref.current.x - 14,
+        y: p1Ref.current.y + (Math.random() - 0.5) * 6,
+        vx: -(Math.random() * 20 + 15),
+        vy: (Math.random() - 0.5) * 10,
         size: Math.random() * 4 + 2,
-        alpha: 1.0,
-        color: newStance === "LONG" ? "#10B981" : "#EF4444",
+        alpha: 0.9,
+        color: "#FF6B00",
       });
     }
-
-    setP1Telemetry((prev) => ({ ...prev, stance: newStance }));
   }, [gameState]);
 
-  // Stance Switch Action (P2 in Versus)
-  const switchP2Stance = useCallback((newStance: Stance) => {
-    if (gameState !== "playing" || gameMode !== "versus") return;
-    if (p2Ref.current.stance === newStance) return;
-
-    p2Ref.current.stance = newStance;
-    soundEngine.playStanceSwitchSound(newStance === "LONG");
-    setP2Telemetry((prev) => ({ ...prev, stance: newStance }));
+  // Player 2 Flap Action (Versus mode)
+  const handleP2Flap = useCallback(() => {
+    if (gameState !== "playing" || gameMode !== "versus" || p2Ref.current.isDead) return;
+    p2Ref.current.vy = -6.8;
+    soundEngine.playFlapSound();
   }, [gameState, gameMode]);
 
   // Keyboard controls with scroll prevention
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.code === "Space" ||
-        e.code === "ArrowLeft" ||
-        e.code === "ArrowRight" ||
-        e.code === "ArrowUp" ||
-        e.code === "ArrowDown" ||
-        e.code === "KeyA" ||
-        e.code === "KeyD"
-      ) {
+      if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
         e.preventDefault();
       }
 
-      if (gameState !== "playing") return;
-
-      // P1 Controls
-      if (e.code === "KeyA" || e.code === "ArrowLeft") {
-        switchP1Stance("LONG");
-      } else if (e.code === "KeyD" || e.code === "ArrowRight") {
-        switchP1Stance("SHORT");
-      } else if (e.code === "Space") {
-        // Spacebar toggles stance
-        const current = p1Ref.current.stance;
-        switchP1Stance(current === "LONG" ? "SHORT" : "LONG");
+      if (e.code === "Space" || e.code === "KeyW") {
+        handleP1Flap();
       }
 
-      // P2 Controls in Versus Mode
-      if (gameMode === "versus") {
-        if (e.code === "ArrowUp") {
-          switchP2Stance("LONG");
-        } else if (e.code === "ArrowDown") {
-          switchP2Stance("SHORT");
-        }
+      if (e.code === "ArrowUp" && gameMode === "versus") {
+        handleP2Flap();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, { passive: false });
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [gameState, gameMode, switchP1Stance, switchP2Stance]);
+  }, [handleP1Flap, handleP2Flap, gameMode]);
 
-  // Launch Round Sequence with 3-2-1 Countdown
-  const startLaunchSequence = useCallback(() => {
+  // Start Countdown Sequence
+  const startMatchCountdown = useCallback(() => {
     setWinner(null);
     setGameState("countdown");
     setCountdown(3);
     soundEngine.playCountdownBeep(false);
 
-    // Lock strike price
-    const lockedPrice = currentPriceRef.current;
-    setStrikePrice(lockedPrice);
-    strikePriceRef.current = lockedPrice;
+    // Derive deterministic seed for this match
+    const newSeed = Math.floor(Math.random() * 1000000) + 1;
+    setMatchSeed(newSeed);
+    generateCourse(newSeed);
 
-    // Reset Surfers
+    // Reset Rockets
     p1Ref.current = {
-      altitude: 0,
-      velocity: 15,
+      x: 120,
+      y: 220,
+      vy: 0,
+      tilt: 0,
+      isDead: false,
       score: 0,
-      combo: 1.0,
-      stance: "LONG",
-      matchesTrend: false,
-      accuracyTicks: 0,
-      totalTicks: 0,
+      pipesCleared: 0,
+      coinsCollected: 0,
+      distanceTraveled: 0,
       name: "Gmonad Alpha",
       avatar: "🟣",
+      color: "#836EF9",
+      flameColor: "#FF6B00",
     };
 
     p2Ref.current = {
-      altitude: 0,
-      velocity: 15,
+      x: 155,
+      y: 220,
+      vy: 0,
+      tilt: 0,
+      isDead: false,
       score: 0,
-      combo: 1.0,
-      stance: "SHORT",
-      matchesTrend: false,
-      accuracyTicks: 0,
-      totalTicks: 0,
+      pipesCleared: 0,
+      coinsCollected: 0,
+      distanceTraveled: 0,
       name: gameMode === "solo" ? "MemeBot AI" : "Rival Challenger",
       avatar: gameMode === "solo" ? "🤖" : "🐸",
-    };
-
-    aiBrainRef.current = {
-      currentStance: "SHORT",
-      lastReactionTime: 0,
-      thought: "Analyzing initial price ticks... 📊",
-      reactionDelayMs: 320,
+      color: "#10B981",
+      flameColor: "#059669",
     };
 
     particlesRef.current = [];
-    floatingScoresRef.current = [];
+    coinSparklesRef.current = [];
 
     let c = 3;
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -339,31 +293,13 @@ export function RocketClashGame() {
         clearInterval(countdownTimerRef.current!);
         setCountdown(0);
         soundEngine.playCountdownBeep(true);
-        startActiveGame();
+        setGameState("playing");
       }
     }, 1000);
-  }, [gameMode]);
+  }, [generateCourse, gameMode]);
 
-  // Active round timer
-  const startActiveGame = () => {
-    setGameState("playing");
-    setTimeLeft(20);
-
-    if (roundTimerRef.current) clearInterval(roundTimerRef.current);
-    let seconds = 20;
-    roundTimerRef.current = setInterval(() => {
-      seconds--;
-      setTimeLeft(seconds);
-      if (seconds <= 0) {
-        clearInterval(roundTimerRef.current!);
-        finalizeWinner();
-      }
-    }, 1000);
-  };
-
-  // Finalize round when timer expires
-  const finalizeWinner = useCallback(() => {
-    soundEngine.stopThrust();
+  // Finalize Match & Crown Winner
+  const finalizeMatch = useCallback(() => {
     setGameState("gameover");
 
     const s1 = p1Ref.current.score;
@@ -377,7 +313,7 @@ export function RocketClashGame() {
       try {
         confetti({
           particleCount: 90,
-          spread: 80,
+          spread: 75,
           origin: { y: 0.6 },
           colors: ["#6E4EF4", "#10B981", "#F59E0B"],
         });
@@ -388,17 +324,7 @@ export function RocketClashGame() {
     }
   }, []);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (roundTimerRef.current) clearInterval(roundTimerRef.current);
-      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-      cancelAnimationFrame(animFrameId.current);
-      soundEngine.stopThrust();
-    };
-  }, []);
-
-  // Main Canvas & Game Physics Loop
+  // Main Canvas Game Loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -406,7 +332,6 @@ export function RocketClashGame() {
     if (!ctx) return;
 
     let lastTime = performance.now();
-    let scoreAccumulator = 0;
 
     const render = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1);
@@ -414,171 +339,281 @@ export function RocketClashGame() {
 
       const width = canvas.width;
       const height = canvas.height;
+      const speed = worldSpeedRef.current;
 
-      const currP = currentPriceRef.current;
-      const strikeP = strikePriceRef.current;
-      const priceDeltaPercent = strikeP > 0 ? ((currP - strikeP) / strikeP) * 100 : 0;
-
-      // 1. UPDATE PHYSICS & SCORING WHEN PLAYING
+      // 1. UPDATE PHYSICS & GAMEPLAY
       if (gameState === "playing") {
         const p1 = p1Ref.current;
         const p2 = p2Ref.current;
-        const brain = aiBrainRef.current;
+        const gravity = 0.36;
 
-        // Current real-time market trend
-        // If overall delta from strike > 0, trend is LONG; if < 0, SHORT
-        const activeTrend: Stance = priceDeltaPercent >= 0 ? "LONG" : "SHORT";
+        // Move Pipes Leftward
+        let allPipesOffscreen = true;
+        pipesRef.current.forEach((pipe) => {
+          pipe.x -= speed;
+          if (pipe.x + pipe.width > 0) {
+            allPipesOffscreen = false;
+          }
 
-        // AI REFLEX LOGIC (Evaluates every 280-350ms, mimicking human visual reflex)
-        if (gameMode === "solo" && time - brain.lastReactionTime > brain.reactionDelayMs) {
-          brain.lastReactionTime = time;
+          // --- P1 Collision & Scoring ---
+          if (!p1.isDead) {
+            // Check pipe pass (+100 pts)
+            if (!pipe.passedP1 && pipe.x + pipe.width < p1.x) {
+              pipe.passedP1 = true;
+              p1.pipesCleared += 1;
+              p1.score += 100;
+            }
 
-          // AI follows the market trend with slight human-like hesitation / error rate
-          const shouldFlip = p2.stance !== activeTrend;
-          if (shouldFlip) {
-            // 90% chance to flip correctly after delay
-            if (Math.random() < 0.92) {
-              p2.stance = activeTrend;
-              brain.currentStance = activeTrend;
-              brain.thought = activeTrend === "LONG" ? "PUMP DETECTED! Flipping LONG! 🟢" : "DUMP DETECTED! Flipping SHORT! 🔴";
-            } else {
-              brain.thought = "Fakeout candle?! Hesitating... 🤔";
+            // Check Monad Coin Pickup (+50 pts)
+            if (pipe.hasCoin && !pipe.coinCollectedP1) {
+              const coinX = pipe.x + pipe.width * 0.5;
+              const distCoin = Math.hypot(p1.x - coinX, p1.y - pipe.coinY);
+              if (distCoin < 24) {
+                pipe.coinCollectedP1 = true;
+                p1.coinsCollected += 1;
+                p1.score += 50;
+                soundEngine.playCoinSound();
+                coinSparklesRef.current.push({
+                  x: coinX,
+                  y: pipe.coinY,
+                  alpha: 1.0,
+                  text: "+50 MON COIN",
+                });
+              }
+            }
+
+            // Hitbox Check against Top and Bottom pipes
+            const rocketRadius = 14;
+            const inPipeX = p1.x + rocketRadius > pipe.x && p1.x - rocketRadius < pipe.x + pipe.width;
+            if (inPipeX) {
+              const hitTop = p1.y - rocketRadius < pipe.topHeight;
+              const hitBottom = p1.y + rocketRadius > pipe.topHeight + pipe.gapHeight;
+              if (hitTop || hitBottom) {
+                p1.isDead = true;
+                soundEngine.playExplosionSound();
+                // Spawn crash debris
+                for (let i = 0; i < 20; i++) {
+                  particlesRef.current.push({
+                    x: p1.x,
+                    y: p1.y,
+                    vx: (Math.random() - 0.5) * 60,
+                    vy: (Math.random() - 0.5) * 60,
+                    size: Math.random() * 5 + 2,
+                    alpha: 1.0,
+                    color: Math.random() > 0.5 ? "#EF4444" : "#836EF9",
+                  });
+                }
+              }
+            }
+          }
+
+          // --- P2 AI (or Versus Player) Collision & Scoring ---
+          if (!p2.isDead) {
+            // Check pipe pass
+            if (!pipe.passedP2 && pipe.x + pipe.width < p2.x) {
+              pipe.passedP2 = true;
+              p2.pipesCleared += 1;
+              p2.score += 100;
+            }
+
+            // Check Coin Pickup
+            if (pipe.hasCoin && !pipe.coinCollectedP2) {
+              const coinX = pipe.x + pipe.width * 0.5;
+              const distCoin = Math.hypot(p2.x - coinX, p2.y - pipe.coinY);
+              if (distCoin < 24) {
+                pipe.coinCollectedP2 = true;
+                p2.coinsCollected += 1;
+                p2.score += 50;
+              }
+            }
+
+            // Hitbox Check
+            const rocketRadius = 14;
+            const inPipeX = p2.x + rocketRadius > pipe.x && p2.x - rocketRadius < pipe.x + pipe.width;
+            if (inPipeX) {
+              const hitTop = p2.y - rocketRadius < pipe.topHeight;
+              const hitBottom = p2.y + rocketRadius > pipe.topHeight + pipe.gapHeight;
+              if (hitTop || hitBottom) {
+                p2.isDead = true;
+                soundEngine.playHitSound();
+              }
+            }
+          }
+        });
+
+        // SOLO MODE: MEMEBOT AI LOOKAHEAD BEHAVIOR
+        if (gameMode === "solo" && !p2.isDead) {
+          // Find next approaching pipe
+          const nextPipe = pipesRef.current.find((p) => p.x + p.width > p2.x - 20);
+          if (nextPipe) {
+            const targetCenterY = nextPipe.topHeight + nextPipe.gapHeight * 0.5;
+            // AI flaps when dipping below gap center with high human-like precision
+            if (p2.y > targetCenterY + 10 && p2.vy >= 0) {
+              p2.vy = -6.8;
             }
           } else {
-            brain.thought = activeTrend === "LONG" ? "Riding the Bull Surge! 🚀" : "Surfing the Bear Dump! 🐻";
-          }
-          setAiThought(brain.thought);
-        }
-
-        // SCORING ENGINE (Ticks every 100ms)
-        scoreAccumulator += dt;
-        if (scoreAccumulator >= 0.1) {
-          scoreAccumulator = 0;
-
-          [p1, p2].forEach((r, idx) => {
-            r.totalTicks += 1;
-            const laneX = idx === 0 ? width * 0.32 : width * 0.68;
-
-            if (r.stance === activeTrend) {
-              r.matchesTrend = true;
-              r.accuracyTicks += 1;
-
-              // Build Combo
-              r.combo = Math.min(3.0, Number((r.combo + 0.05).toFixed(2)));
-              const pointsEarned = Math.round(10 * r.combo);
-              r.score += pointsEarned;
-
-              // Spawn floaty score text occasionally
-              if (Math.random() < 0.25) {
-                floatingScoresRef.current.push({
-                  x: laneX + (Math.random() - 0.5) * 30,
-                  y: height * 0.54,
-                  text: `+${pointsEarned}`,
-                  color: r.stance === "LONG" ? "#10B981" : "#EF4444",
-                  alpha: 1.0,
-                  vy: -40,
-                });
-                if (idx === 0) soundEngine.playScoreTickSound();
-              }
-            } else {
-              r.matchesTrend = false;
-              // Reset Combo on mismatch
-              r.combo = 1.0;
+            // Hover in middle if no pipes ahead
+            if (p2.y > height * 0.5 && p2.vy >= 0) {
+              p2.vy = -6.8;
             }
-          });
-
-          // Sync Telemetry for React UI
-          setP1Telemetry({
-            score: p1.score,
-            combo: p1.combo,
-            stance: p1.stance,
-            matches: p1.matchesTrend,
-            accuracy: p1.totalTicks > 0 ? Math.round((p1.accuracyTicks / p1.totalTicks) * 100) : 100,
-          });
-
-          setP2Telemetry({
-            score: p2.score,
-            combo: p2.combo,
-            stance: p2.stance,
-            matches: p2.matchesTrend,
-            accuracy: p2.totalTicks > 0 ? Math.round((p2.accuracyTicks / p2.totalTicks) * 100) : 100,
-          });
+          }
         }
 
-        // UPDATE VELOCITY & ALTITUDE
-        [p1, p2].forEach((r, idx) => {
-          const laneX = idx === 0 ? width * 0.32 : width * 0.68;
-          const targetVel = r.matchesTrend ? 55 * r.combo : 15;
-          r.velocity += (targetVel - r.velocity) * Math.min(1, 5 * dt);
-          r.altitude += r.velocity * dt;
+        // Apply Rocket Physics
+        [p1, p2].forEach((r) => {
+          if (!r.isDead) {
+            r.vy += gravity;
+            r.y += r.vy;
+            r.distanceTraveled += speed;
+            r.score += 0.2; // Continuous survival points
 
-          // Exhaust particles
-          const color = r.stance === "LONG" ? "#10B981" : "#EF4444";
-          particlesRef.current.push({
-            x: laneX + (Math.random() - 0.5) * 12,
-            y: height * 0.62 + 28,
-            vx: (Math.random() - 0.5) * 16,
-            vy: Math.random() * 40 + 40,
-            size: Math.random() * 4 + 2,
-            alpha: 0.85,
-            color: r.matchesTrend ? color : "#94A3B8",
-          });
+            // Tilt angle
+            r.tilt = Math.max(-25, Math.min(65, r.vy * 4.5));
+
+            // Boundary collision (Floor / Ceiling)
+            if (r.y > height - 24 || r.y < 16) {
+              r.isDead = true;
+              soundEngine.playExplosionSound();
+            }
+          } else {
+            // Dead rocket tumbles down
+            if (r.y < height + 40) {
+              r.vy += gravity * 1.5;
+              r.y += r.vy;
+              r.tilt = Math.min(90, r.tilt + 6);
+            }
+          }
         });
+
+        // Sync Telemetry
+        setP1Telemetry({
+          score: Math.floor(p1.score),
+          pipes: p1.pipesCleared,
+          coins: p1.coinsCollected,
+          isDead: p1.isDead,
+        });
+        setP2Telemetry({
+          score: Math.floor(p2.score),
+          pipes: p2.pipesCleared,
+          coins: p2.coinsCollected,
+          isDead: p2.isDead,
+        });
+
+        // Check Match Termination Condition:
+        // 1. Both rockets crashed, OR
+        // 2. All 35 pipes completed
+        if ((p1.isDead && p2.isDead) || allPipesOffscreen) {
+          finalizeMatch();
+        }
       }
 
-      // 2. CANVAS RENDERING
+      // 2. CANVAS RENDERING (Apple Light Mode Aesthetic)
       ctx.clearRect(0, 0, width, height);
 
-      // Background Gradient
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
-      bgGrad.addColorStop(0, "#F8FAFC");
-      bgGrad.addColorStop(1, "#F1F5F9");
-      ctx.fillStyle = bgGrad;
+      // Background Sky Gradient
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
+      skyGrad.addColorStop(0, "#F8FAFC");
+      skyGrad.addColorStop(1, "#EFF6FF");
+      ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // Render Moving Starfield / Speed lines
-      const avgVel = gameState === "playing" ? (p1Ref.current.velocity + p2Ref.current.velocity) / 2 : 15;
-      starsRef.current.forEach((s) => {
-        s.y += (s.speed + avgVel * 0.08);
-        if (s.y > height) {
-          s.y = -10;
-          s.x = Math.random() * width;
-        }
-
-        ctx.fillStyle = `rgba(148, 163, 184, ${s.opacity})`;
+      // Distant Grid Lines (Crypto Chart Grid)
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.035)";
+      ctx.lineWidth = 1;
+      for (let y = 40; y < height; y += 40) {
         ctx.beginPath();
-        if (avgVel > 35) {
-          ctx.rect(s.x, s.y, s.size, s.size + avgVel * 0.22);
-        } else {
-          ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
-        }
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Render Candlestick Obstacle Pipes
+      pipesRef.current.forEach((pipe) => {
+        if (pipe.x + pipe.width < -20 || pipe.x > width + 20) return;
+
+        const mainColor = pipe.isBullish ? "#10B981" : "#EF4444";
+        const darkAccent = pipe.isBullish ? "#059669" : "#DC2626";
+
+        // Top Pipe (From ceiling down to topHeight)
+        ctx.fillStyle = mainColor;
+        ctx.beginPath();
+        ctx.roundRect(pipe.x, 0, pipe.width, pipe.topHeight, [0, 0, 8, 8]);
         ctx.fill();
+        ctx.strokeStyle = darkAccent;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Top Pipe Cap Lip
+        ctx.fillStyle = darkAccent;
+        ctx.beginPath();
+        ctx.roundRect(pipe.x - 3, pipe.topHeight - 16, pipe.width + 6, 16, 4);
+        ctx.fill();
+
+        // Bottom Pipe (From topHeight + gapHeight to floor)
+        const bottomY = pipe.topHeight + pipe.gapHeight;
+        const bottomH = height - bottomY;
+        ctx.fillStyle = mainColor;
+        ctx.beginPath();
+        ctx.roundRect(pipe.x, bottomY, pipe.width, bottomH, [8, 8, 0, 0]);
+        ctx.fill();
+        ctx.strokeStyle = darkAccent;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Bottom Pipe Cap Lip
+        ctx.fillStyle = darkAccent;
+        ctx.beginPath();
+        ctx.roundRect(pipe.x - 3, bottomY, pipe.width + 6, 16, 4);
+        ctx.fill();
+
+        // Candle Wick Lines (Top and Bottom)
+        ctx.strokeStyle = darkAccent;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(pipe.x + pipe.width * 0.5, 0);
+        ctx.lineTo(pipe.x + pipe.width * 0.5, pipe.topHeight);
+        ctx.moveTo(pipe.x + pipe.width * 0.5, bottomY);
+        ctx.lineTo(pipe.x + pipe.width * 0.5, height);
+        ctx.stroke();
+
+        // Collectible Monad Coin inside Gap
+        if (pipe.hasCoin && !pipe.coinCollectedP1) {
+          ctx.save();
+          ctx.translate(pipe.x + pipe.width * 0.5, pipe.coinY);
+          // Gold coin body
+          ctx.fillStyle = "#F59E0B";
+          ctx.beginPath();
+          ctx.arc(0, 0, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#D97706";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Coin text
+          ctx.font = "bold 9px monospace";
+          ctx.fillStyle = "#FFFFFF";
+          ctx.textAlign = "center";
+          ctx.fillText("M", 0, 3);
+          ctx.restore();
+        }
       });
 
-      // Racing Lanes Divider
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.06)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([10, 8]);
+      // Render Floor
+      ctx.fillStyle = "#E2E8F0";
+      ctx.fillRect(0, height - 12, width, 12);
+      ctx.strokeStyle = "#CBD5E1";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(width * 0.5, 0);
-      ctx.lineTo(width * 0.5, height);
+      ctx.moveTo(0, height - 12);
+      ctx.lineTo(width, height - 12);
       ctx.stroke();
-      ctx.setLineDash([]);
 
-      // Lane Headers
-      ctx.font = "bold 11px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#64748B";
-      ctx.fillText("LANE 1: YOU", width * 0.32, 28);
-      ctx.fillText(gameMode === "solo" ? "LANE 2: MEMEBOT AI" : "LANE 2: RIVAL", width * 0.68, 28);
-
-      // Update & Render Particles
+      // Render Particles
       for (let i = particlesRef.current.length - 1; i >= 0; i--) {
         const p = particlesRef.current[i];
         p.x += p.vx * dt;
         p.y += p.vy * dt;
-        p.alpha -= 2.0 * dt;
-        p.size = Math.max(0.5, p.size - 2.5 * dt);
+        p.alpha -= 1.8 * dt;
 
         if (p.alpha <= 0) {
           particlesRef.current.splice(i, 1);
@@ -593,171 +628,91 @@ export function RocketClashGame() {
       }
       ctx.globalAlpha = 1.0;
 
-      // Update & Render Floating Score Badges (+10, +20, etc.)
-      for (let i = floatingScoresRef.current.length - 1; i >= 0; i--) {
-        const fs = floatingScoresRef.current[i];
-        fs.y += fs.vy * dt;
-        fs.alpha -= 1.6 * dt;
+      // Render Floating Coin Sparkles
+      for (let i = coinSparklesRef.current.length - 1; i >= 0; i--) {
+        const cs = coinSparklesRef.current[i];
+        cs.y -= 25 * dt;
+        cs.alpha -= 1.4 * dt;
 
-        if (fs.alpha <= 0) {
-          floatingScoresRef.current.splice(i, 1);
+        if (cs.alpha <= 0) {
+          coinSparklesRef.current.splice(i, 1);
           continue;
         }
 
-        ctx.font = "bold 13px system-ui, sans-serif";
-        ctx.fillStyle = fs.color;
-        ctx.globalAlpha = fs.alpha;
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.fillStyle = "#D97706";
+        ctx.globalAlpha = cs.alpha;
         ctx.textAlign = "center";
-        ctx.fillText(fs.text, fs.x, fs.y);
+        ctx.fillText(cs.text, cs.x, cs.y);
       }
       ctx.globalAlpha = 1.0;
 
-      // Draw Surfer Rocket Sprites
-      const renderSurferRocket = (r: SurferRocket, laneX: number) => {
-        // Vertical dynamic altitude tilt: leader moves slightly higher
-        const scoreDelta = r === p1Ref.current ? (p1Ref.current.score - p2Ref.current.score) : (p2Ref.current.score - p1Ref.current.score);
-        const clampedDelta = Math.max(-120, Math.min(120, scoreDelta));
-        const rocketY = height * 0.6 - (clampedDelta * 0.5);
+      // Draw Flappy Rockets
+      const renderRocketSprite = (r: FlappyRocket, isP2: boolean) => {
+        if (r.y > height + 50) return;
 
         ctx.save();
-        ctx.translate(laneX, rocketY);
+        ctx.translate(r.x, r.y);
+        ctx.rotate((r.tilt * Math.PI) / 180);
 
-        const isLong = r.stance === "LONG";
-        const mainColor = isLong ? "#10B981" : "#EF4444";
-        const accentColor = isLong ? "#059669" : "#DC2626";
-
-        // Matching Aura Glow
-        if (r.matchesTrend) {
-          ctx.strokeStyle = isLong ? "rgba(16, 185, 129, 0.45)" : "rgba(239, 68, 68, 0.45)";
-          ctx.lineWidth = 4;
-          ctx.beginPath();
-          ctx.ellipse(0, 0, 34, 48, 0, 0, Math.PI * 2);
-          ctx.stroke();
+        // If P2 in Solo, render with transparent shadow style
+        if (isP2 && gameMode === "solo") {
+          ctx.globalAlpha = 0.78;
         }
 
-        // Thruster Flames
-        ctx.fillStyle = mainColor;
-        ctx.beginPath();
-        ctx.moveTo(-10, 24);
-        ctx.lineTo(0, 44 + Math.random() * (r.matchesTrend ? 18 : 8));
-        ctx.lineTo(10, 24);
-        ctx.closePath();
-        ctx.fill();
-
-        // Inner white flame core
-        ctx.fillStyle = "#FFFFFF";
-        ctx.beginPath();
-        ctx.moveTo(-5, 24);
-        ctx.lineTo(0, 34 + Math.random() * 8);
-        ctx.lineTo(5, 24);
-        ctx.closePath();
-        ctx.fill();
+        // Thruster flame
+        if (!r.isDead && r.vy < 0) {
+          ctx.fillStyle = r.flameColor;
+          ctx.beginPath();
+          ctx.moveTo(-16, -4);
+          ctx.lineTo(-28 - Math.random() * 8, 0);
+          ctx.lineTo(-16, 4);
+          ctx.closePath();
+          ctx.fill();
+        }
 
         // Rocket Fuselage
-        ctx.fillStyle = mainColor;
+        ctx.fillStyle = r.color;
         ctx.beginPath();
-        ctx.moveTo(0, -32); // Tip
-        ctx.quadraticCurveTo(18, -8, 14, 24);
-        ctx.lineTo(-14, 24);
-        ctx.quadraticCurveTo(-18, -8, 0, -32);
-        ctx.closePath();
+        ctx.ellipse(0, 0, 18, 10, 0, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Fins (Horns for Bull / Spikes for Bear)
-        ctx.fillStyle = accentColor;
+        // Rocket Nosecone
+        ctx.fillStyle = "#FFFFFF";
         ctx.beginPath();
-        ctx.moveTo(-14, 10);
-        ctx.lineTo(-24, 24);
-        ctx.lineTo(-12, 24);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.moveTo(14, 10);
-        ctx.lineTo(24, 24);
-        ctx.lineTo(12, 24);
+        ctx.moveTo(12, -7);
+        ctx.lineTo(22, 0);
+        ctx.lineTo(12, 7);
         ctx.closePath();
         ctx.fill();
 
         // Cockpit Glass & Avatar
         ctx.fillStyle = "#FFFFFF";
         ctx.beginPath();
-        ctx.arc(0, -2, 10, 0, Math.PI * 2);
+        ctx.arc(2, 0, 7.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
         ctx.stroke();
 
-        ctx.font = "13px sans-serif";
+        ctx.font = "11px sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText(r.avatar, 0, 3);
+        ctx.fillText(r.avatar, 2, 4);
 
-        // Active Stance Pill Badge above Rocket
-        ctx.fillStyle = mainColor;
-        ctx.beginPath();
-        ctx.roundRect(-42, -58, 84, 20, 10);
-        ctx.fill();
-
-        ctx.font = "bold 10px system-ui, sans-serif";
-        ctx.fillStyle = "#FFFFFF";
-        ctx.fillText(isLong ? "🟢 LONG (SUBE)" : "🔴 SHORT (BAJA)", 0, -44);
-
-        // Matching indicator star
-        if (r.matchesTrend) {
-          ctx.font = "bold 11px system-ui, sans-serif";
-          ctx.fillStyle = "#F59E0B";
-          ctx.fillText(`🔥 ${r.combo.toFixed(1)}x COMBO`, 0, -66);
-        } else {
-          ctx.font = "bold 9px system-ui, sans-serif";
-          ctx.fillStyle = "#94A3B8";
-          ctx.fillText("MISMATCH (0 pts)", 0, -66);
-        }
-
-        // Floating Score Pill below Rocket
-        ctx.fillStyle = "#FFFFFF";
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(-45, 34, 90, 20, 6);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.font = "bold 11px monospace";
-        ctx.fillStyle = "#0F172A";
-        ctx.fillText(`${r.score} PTS`, 0, 48);
+        // Player Tag above Rocket
+        ctx.font = "bold 9px system-ui, sans-serif";
+        ctx.fillStyle = r.isDead ? "#EF4444" : "#1E293B";
+        ctx.fillText(r.isDead ? "💥 CRASH" : r.name, 0, -18);
 
         ctx.restore();
+        ctx.globalAlpha = 1.0;
       };
 
-      renderSurferRocket(p1Ref.current, width * 0.32);
-      renderSurferRocket(p2Ref.current, width * 0.68);
-
-      // AI Thought Bubble over AI Rocket
-      if (gameMode === "solo" && gameState === "playing") {
-        const brain = aiBrainRef.current;
-        const aiLaneX = width * 0.68;
-        const aiY = height * 0.34;
-
-        ctx.save();
-        ctx.fillStyle = "#FFFFFF";
-        ctx.strokeStyle = "rgba(0, 0, 0, 0.12)";
-        ctx.lineWidth = 1.2;
-        ctx.shadowColor = "rgba(0, 0, 0, 0.08)";
-        ctx.shadowBlur = 8;
-        ctx.beginPath();
-        ctx.roundRect(aiLaneX - 90, aiY - 24, 180, 24, 12);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.shadowBlur = 0;
-        ctx.font = "bold 10px system-ui, sans-serif";
-        ctx.fillStyle = "#1E293B";
-        ctx.textAlign = "center";
-        ctx.fillText(brain.thought, aiLaneX, aiY - 8);
-        ctx.restore();
-      }
+      // Draw P2 first, then P1 in front
+      renderRocketSprite(p2Ref.current, true);
+      renderRocketSprite(p1Ref.current, false);
 
       // Countdown Screen Overlay
       if (gameState === "countdown") {
@@ -767,11 +722,11 @@ export function RocketClashGame() {
         ctx.font = "bold 56px system-ui, sans-serif";
         ctx.fillStyle = "#6E4EF4";
         ctx.textAlign = "center";
-        ctx.fillText(countdown > 0 ? String(countdown) : "SURF!", width * 0.5, height * 0.52);
+        ctx.fillText(countdown > 0 ? String(countdown) : "FLAP!", width * 0.5, height * 0.52);
 
         ctx.font = "bold 14px system-ui, sans-serif";
         ctx.fillStyle = "#475569";
-        ctx.fillText("Match the market trend to stack combos!", width * 0.5, height * 0.62);
+        ctx.fillText("Press [SPACE] or Tap Screen to Flap!", width * 0.5, height * 0.62);
       }
 
       animFrameId.current = requestAnimationFrame(render);
@@ -779,11 +734,7 @@ export function RocketClashGame() {
 
     animFrameId.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animFrameId.current);
-  }, [gameState, gameMode, selectedAsset]);
-
-  // Price delta helper
-  const priceDelta = strikePrice > 0 ? currentPrice - strikePrice : 0;
-  const priceDeltaPercent = strikePrice > 0 ? (priceDelta / strikePrice) * 100 : 0;
+  }, [gameState, gameMode, finalizeMatch]);
 
   return (
     <div className="flex flex-col items-center w-full max-w-5xl mx-auto px-4 py-6 font-sans select-none">
@@ -813,53 +764,33 @@ export function RocketClashGame() {
         </div>
       </div>
 
-      {/* 2. Oracle Market Ribbon & Pot Banner */}
+      {/* 2. Skillz Model Ribbon & Escrow Pot */}
       <div className="w-full bg-white border border-black/[0.08] rounded-2xl p-4 mb-4 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <AssetLogo symbol={selectedAsset} size={32} />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-slate-900 text-base">{selectedAsset}/USD</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
-                Strike: ${strikePrice.toFixed(selectedAsset === "BTC" ? 1 : 3)}
+              <span className="font-bold text-slate-900 text-base">{selectedAsset}/USD Match</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-purple-50 text-[#6E4EF4] font-mono font-semibold">
+                Seed #{matchSeed}
               </span>
             </div>
             <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-              <span>Now: ${currentPrice.toFixed(selectedAsset === "BTC" ? 1 : 3)}</span>
-              <span
-                className={`font-mono font-bold flex items-center gap-0.5 ${
-                  priceDeltaPercent >= 0 ? "text-emerald-600" : "text-red-500"
-                }`}
-              >
-                {priceDeltaPercent >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                {priceDeltaPercent >= 0 ? "+" : ""}
-                {priceDeltaPercent.toFixed(3)}%
-              </span>
+              <span>Skillz-Model: Identical Obstacles & Physics for Both Players</span>
             </div>
           </div>
         </div>
 
-        {/* Live Market Momentum Badge */}
-        <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
-          <div className="text-right">
-            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Market Trend</div>
-            <div
-              className={`text-xs font-bold flex items-center gap-1 ${
-                priceDeltaPercent >= 0 ? "text-emerald-600" : "text-red-500"
-              }`}
-            >
-              {priceDeltaPercent >= 0 ? (
-                <>
-                  <ArrowUpRight className="w-4 h-4" />
-                  <span>🟢 PUMPING (Longs Score)</span>
-                </>
-              ) : (
-                <>
-                  <ArrowDownRight className="w-4 h-4" />
-                  <span>🔴 DUMPING (Shorts Score)</span>
-                </>
-              )}
-            </div>
+        {/* Live Score Counter */}
+        <div className="flex items-center gap-4 px-4 py-2 rounded-xl bg-slate-50 border border-black/[0.04]">
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400">YOU (P1)</div>
+            <div className="text-sm font-bold text-slate-900 font-mono">{p1Telemetry.score} pts</div>
+          </div>
+          <div className="h-6 w-px bg-slate-200" />
+          <div>
+            <div className="text-[10px] font-semibold text-slate-400">{gameMode === "solo" ? "MEMEBOT AI" : "RIVAL"}</div>
+            <div className="text-sm font-bold text-slate-900 font-mono">{p2Telemetry.score} pts</div>
           </div>
         </div>
 
@@ -867,9 +798,9 @@ export function RocketClashGame() {
         <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-[#6E4EF4]/5 border border-[#6E4EF4]/15">
           <Coins className="w-5 h-5 text-[#6E4EF4]" />
           <div>
-            <div className="text-[11px] font-semibold text-[#6E4EF4] uppercase tracking-wider">Escrow Pot (3.5% Rake)</div>
+            <div className="text-[11px] font-semibold text-[#6E4EF4] uppercase tracking-wider">Escrow Pot (5.0% Rake)</div>
             <div className="text-xs font-bold text-slate-900 font-mono">
-              {(stakeMon * 2).toFixed(2)} MON • Winner: {(stakeMon * 2 * 0.965).toFixed(4)} MON
+              {(stakeMon * 2).toFixed(2)} MON • Winner: {(stakeMon * 2 * 0.95).toFixed(4)} MON
             </div>
           </div>
         </div>
@@ -900,12 +831,12 @@ export function RocketClashGame() {
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>Local 2P Reflex Clash</span>
+              <span>Local 2P Flappy Clash</span>
             </button>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Asset:</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase">Asset Theme:</span>
             {(["MON", "BTC", "ETH", "SOL"] as SupportedAsset[]).map((a) => (
               <button
                 key={a}
@@ -922,17 +853,20 @@ export function RocketClashGame() {
           </div>
 
           <button
-            onClick={startLaunchSequence}
+            onClick={startMatchCountdown}
             className="px-6 py-2.5 rounded-xl bg-[#6E4EF4] text-white font-bold text-sm shadow-[0_2px_10px_rgba(110,78,244,0.3)] hover:bg-[#5b3ce0] active:scale-95 transition-all flex items-center gap-2 ml-auto"
           >
             <Zap className="w-4 h-4 fill-current" />
-            <span>START DUEL (0.25 MON)</span>
+            <span>ENTER DUEL (0.25 MON)</span>
           </button>
         </div>
       )}
 
-      {/* 4. Canvas Arena */}
-      <div className="relative w-full rounded-2xl overflow-hidden border border-black/[0.08] shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-slate-900">
+      {/* 4. Flappy Canvas Arena */}
+      <div
+        onClick={handleP1Flap}
+        className="relative w-full rounded-2xl overflow-hidden border border-black/[0.08] shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-slate-900 cursor-pointer"
+      >
         <canvas
           ref={canvasRef}
           width={880}
@@ -940,31 +874,26 @@ export function RocketClashGame() {
           className="w-full h-auto block touch-none"
         />
 
-        {/* Live Timer Pill */}
-        {gameState === "playing" && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-white/95 border border-black/[0.1] shadow-md flex items-center gap-2 text-sm font-bold text-slate-900 font-mono">
-            <Clock className="w-4 h-4 text-[#6E4EF4]" />
-            <span>{timeLeft}s</span>
-          </div>
-        )}
-
         {/* Victory Game Over Banner */}
         {gameState === "gameover" && (
-          <div className="absolute inset-0 bg-white/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute inset-0 bg-white/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300"
+          >
             <div className="w-16 h-16 rounded-2xl bg-[#6E4EF4]/10 flex items-center justify-center text-3xl mb-3 shadow-inner">
               {winner === "P1" ? "🏆" : winner === "DRAW" ? "⚖️" : "🤖"}
             </div>
 
             <h2 className="text-2xl font-bold text-slate-900 mb-1">
-              {winner === "P1" ? "VICTORY! YOU OUT-PREDICTED THE RIVAL" : winner === "DRAW" ? "DEAD HEAT TIE!" : "MEMEBOT AI WINS"}
+              {winner === "P1" ? "VICTORY! YOU OUT-SURVIVED THE RIVAL" : winner === "DRAW" ? "DEAD HEAT TIE!" : "MEMEBOT AI WINS"}
             </h2>
 
             <p className="text-xs text-slate-500 max-w-sm mb-4">
               {winner === "P1"
-                ? `You scored ${p1Telemetry.score} pts (${p1Telemetry.accuracy}% accuracy) vs rival's ${p2Telemetry.score} pts.`
+                ? `You scored ${p1Telemetry.score} pts (${p1Telemetry.pipes} pipes, ${p1Telemetry.coins} coins) vs rival's ${p2Telemetry.score} pts.`
                 : winner === "DRAW"
-                ? "Both players matched exact scores. Full escrow refunded."
-                : `AI scored ${p2Telemetry.score} pts (${p2Telemetry.accuracy}% accuracy) vs your ${p1Telemetry.score} pts.`}
+                ? "Both players matched scores. Full escrow refunded."
+                : `AI scored ${p2Telemetry.score} pts vs your ${p1Telemetry.score} pts.`}
             </p>
 
             <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.06] mb-5 flex items-center gap-6 text-xs font-mono">
@@ -981,18 +910,18 @@ export function RocketClashGame() {
               <div>
                 <span className="text-slate-400 block text-[10px]">NET ESCROW PAYOUT</span>
                 <span className="font-bold text-[#6E4EF4] text-sm">
-                  {winner === "P1" ? `${(stakeMon * 2 * 0.965).toFixed(4)} MON` : "0.00 MON"}
+                  {winner === "P1" ? `${(stakeMon * 2 * 0.95).toFixed(4)} MON` : "0.00 MON"}
                 </span>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
               <button
-                onClick={startLaunchSequence}
+                onClick={startMatchCountdown}
                 className="px-6 py-2.5 rounded-xl bg-[#6E4EF4] text-white font-bold text-sm hover:bg-[#5b3ce0] active:scale-95 transition-all shadow-md flex items-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
-                <span>PLAY AGAIN (REMATCH)</span>
+                <span>PLAY AGAIN (NEW SEED)</span>
               </button>
               <button
                 onClick={() => setGameState("idle")}
@@ -1005,185 +934,72 @@ export function RocketClashGame() {
         )}
       </div>
 
-      {/* 5. Real-Time Stance Switch Buttons (The Core Gameplay!) */}
+      {/* 5. Flap Button & Mobile Controls */}
       <div className="w-full mt-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between px-1">
-          <div className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-            <Flame className="w-4 h-4 text-[#6E4EF4]" />
-            <span>Switch Stance in Real Time (Hotkeys: [A / ←] & [D / →] or [SPACE] to toggle)</span>
+        <button
+          onClick={handleP1Flap}
+          disabled={gameState !== "playing" || p1Telemetry.isDead}
+          className={`w-full py-4 rounded-2xl bg-white border border-black/[0.08] shadow-sm hover:border-[#6E4EF4] active:scale-[0.99] transition-all flex items-center justify-between px-6 cursor-pointer touch-none ${
+            p1Telemetry.isDead ? "opacity-50 cursor-not-allowed" : ""
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-[#6E4EF4]/10 text-[#6E4EF4] flex items-center justify-center text-2xl font-bold">
+              🚀
+            </div>
+            <div className="text-left">
+              <div className="text-sm font-bold text-slate-900">
+                TAP OR PRESS [SPACE] TO FLAP
+              </div>
+              <div className="text-xs text-slate-500 font-mono mt-0.5">
+                Clear Candlestick Pipes (+100 pts) • Collect Monad Coins (+50 pts)
+              </div>
+            </div>
           </div>
-          <div className="text-xs font-mono text-slate-500">
-            Score: <span className="font-bold text-slate-900">{p1Telemetry.score} pts</span> • Combo:{" "}
-            <span className="font-bold text-[#6E4EF4]">{p1Telemetry.combo.toFixed(1)}x</span>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          {/* SUBE / LONG BUTTON */}
+          <Flame className="w-6 h-6 text-[#6E4EF4]" />
+        </button>
+
+        {gameMode === "versus" && (
           <button
-            onClick={() => switchP1Stance("LONG")}
-            disabled={gameState !== "playing"}
-            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
-              p1Telemetry.stance === "LONG"
-                ? "bg-emerald-500/10 border-emerald-500 ring-2 ring-emerald-500/20 shadow-md"
-                : "bg-white border-black/[0.08] hover:border-black/[0.15] opacity-75"
-            }`}
+            onClick={handleP2Flap}
+            disabled={gameState !== "playing" || p2Telemetry.isDead}
+            className="w-full py-3 rounded-2xl bg-slate-50 border border-black/[0.06] text-slate-700 font-bold text-xs flex items-center justify-center gap-2"
           >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
-                  p1Telemetry.stance === "LONG"
-                    ? "bg-emerald-600 text-white shadow-sm scale-105"
-                    : "bg-slate-100 text-slate-500"
-                }`}
-              >
-                🟢
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <span>SUBE (LONG)</span>
-                  {p1Telemetry.stance === "LONG" && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">
-                      ACTIVE
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  Press [A] or [←] • Scores during Bull Ticks
-                </div>
-              </div>
-            </div>
-
-            <ArrowUpRight
-              className={`w-6 h-6 transition-transform ${
-                p1Telemetry.stance === "LONG" ? "text-emerald-600 scale-125" : "text-slate-400"
-              }`}
-            />
+            <span>P2: PRESS [ARROW UP] TO FLAP</span>
           </button>
-
-          {/* BAJA / SHORT BUTTON */}
-          <button
-            onClick={() => switchP1Stance("SHORT")}
-            disabled={gameState !== "playing"}
-            className={`p-4 rounded-2xl border transition-all flex items-center justify-between cursor-pointer active:scale-[0.98] ${
-              p1Telemetry.stance === "SHORT"
-                ? "bg-red-500/10 border-red-500 ring-2 ring-red-500/20 shadow-md"
-                : "bg-white border-black/[0.08] hover:border-black/[0.15] opacity-75"
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl font-bold transition-all ${
-                  p1Telemetry.stance === "SHORT"
-                    ? "bg-red-600 text-white shadow-sm scale-105"
-                    : "bg-slate-100 text-slate-500"
-                }`}
-              >
-                🔴
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <span>BAJA (SHORT)</span>
-                  {p1Telemetry.stance === "SHORT" && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-semibold">
-                      ACTIVE
-                    </span>
-                  )}
-                </div>
-                <div className="text-xs text-slate-500 font-mono mt-0.5">
-                  Press [D] or [→] • Scores during Bear Dumps
-                </div>
-              </div>
-            </div>
-
-            <ArrowDownRight
-              className={`w-6 h-6 transition-transform ${
-                p1Telemetry.stance === "SHORT" ? "text-red-600 scale-125" : "text-slate-400"
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* Rival Stance Indicator / Versus Controls */}
-        {gameMode === "versus" ? (
-          <div className="grid grid-cols-2 gap-3 mt-1">
-            <button
-              onClick={() => switchP2Stance("LONG")}
-              disabled={gameState !== "playing"}
-              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                p2Telemetry.stance === "LONG"
-                  ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
-                  : "bg-white border-black/[0.08] text-slate-600"
-              }`}
-            >
-              <span>P2: SUBE [↑]</span>
-            </button>
-            <button
-              onClick={() => switchP2Stance("SHORT")}
-              disabled={gameState !== "playing"}
-              className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                p2Telemetry.stance === "SHORT"
-                  ? "bg-red-600 text-white border-red-600 shadow-sm"
-                  : "bg-white border-black/[0.08] text-slate-600"
-              }`}
-            >
-              <span>P2: BAJA [↓]</span>
-            </button>
-          </div>
-        ) : (
-          <div className="p-3 rounded-xl bg-slate-50 border border-black/[0.04] flex items-center justify-between mt-1">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center text-base">
-                🤖
-              </div>
-              <div className="text-xs">
-                <span className="font-bold text-slate-900">MemeBot AI Stance: </span>
-                <span
-                  className={`font-mono font-bold px-2 py-0.5 rounded ${
-                    p2Telemetry.stance === "LONG" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"
-                  }`}
-                >
-                  {p2Telemetry.stance === "LONG" ? "🟢 SUBE (LONG)" : "🔴 BAJA (SHORT)"}
-                </span>
-                <span className="text-slate-500 ml-2 font-mono">• Score: {p2Telemetry.score} pts</span>
-              </div>
-            </div>
-            <div className="text-xs font-mono text-slate-500 italic">
-              &quot;{aiThought}&quot;
-            </div>
-          </div>
         )}
       </div>
 
-      {/* 6. Game Economics & Rules */}
+      {/* 6. Skillz Economic & Fair Play Rules */}
       <div className="w-full mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            Zero Paradojas (Reflex Score)
+            <Shield className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            Identical Shared Seed
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Cambia entre SUBE y BAJA tantas veces como quieras. Gana quien acumule más puntos acertando los ticks de Pyth.
+            Ambos jugadores navegan exactamente la misma pista generada por la semilla #{matchSeed}. Cero suerte, 100% habilidad.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Flame className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            Multiplicador de Racha (x3)
+            <Award className="text-amber-500 w-3.5 h-3.5" />
+            Puntuación Skillz
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Mantener la postura correcta encadena combos de hasta x3. Si el mercado se da vuelta y no reaccionas, pierdes la racha.
+            +100 pts por cada vela superada, +50 pts por Monad Coin y puntos continuos por supervivencia y distancia.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
             <Percent className="w-3.5 h-3.5 text-emerald-600" />
-            3.5% Protocol Fee (Garantizado)
+            5.0% Protocol Rake Garantizado
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Pozo P2P de 0.50 MON. 0.0175 MON para la tesorería de Duelio en cada partida. 100% solvente y rentable.
+            Pozo P2P de 0.50 MON. 0.025 MON de comisión fija para Duelio. La casa nunca arriesga capital propio.
           </p>
         </div>
       </div>
