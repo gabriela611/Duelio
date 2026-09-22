@@ -44,11 +44,12 @@ export function usePriceStream(asset: SupportedAsset): PriceStreamState {
   const [history, setHistory] = useState<PricePoint[]>(() => {
     const initial = BASELINE_PRICES[asset];
     const points: PricePoint[] = [];
-    const now = Date.now();
+    const baseTime = 1700000000000;
     for (let i = 30; i >= 0; i--) {
-      const variance = (Math.sin(i / 4) + (Math.random() - 0.5) * 0.4) * (initial * 0.003);
+      // Deterministic oscillation to avoid server/client hydration mismatch
+      const variance = (Math.sin(i / 4) + Math.sin(i * 1.7) * 0.4) * (initial * 0.003);
       points.push({
-        time: now - i * 1000,
+        time: baseTime - i * 1000,
         price: Number((initial + variance).toFixed(asset === "BTC" ? 1 : 2)),
       });
     }
