@@ -20,6 +20,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  ShieldCheck,
+  Scale,
 } from "lucide-react";
 import Link from "next/link";
 import { usePriceStream, SupportedAsset } from "@/infrastructure/price-feed/usePriceStream";
@@ -70,15 +72,15 @@ export function RocketClashGame() {
   const { currentPrice, history, isLive, source } = priceState;
 
   // Game configuration & round state
-  const [gameMode, setGameMode] = useState<"solo" | "versus">("solo");
+  const [gameMode, setGameMode] = useState<"solo" | "versus">("versus");
   const [selectedDuration, setSelectedDuration] = useState<MatchDuration>(30);
   const [playerStance, setPlayerStance] = useState<"BULL" | "BEAR">("BULL");
   const [stakeMon, setStakeMon] = useState<number>(0.25);
   const [gameState, setGameState] = useState<"idle" | "playing" | "gameover">("idle");
   const [timeLeft, setTimeLeft] = useState<number>(30);
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [winner, setWinner] = useState<"P1" | "P2" | "HOUSE" | null>(null);
-  const [winningSide, setWinningSide] = useState<"BULL" | "BEAR" | null>(null);
+  const [winner, setWinner] = useState<"P1" | "P2" | "HOUSE" | "DRAW" | null>(null);
+  const [winningSide, setWinningSide] = useState<"BULL" | "BEAR" | "DRAW" | null>(null);
 
   // Strike price locked at start of round
   const [strikePrice, setStrikePrice] = useState<number>(currentPrice);
@@ -102,7 +104,7 @@ export function RocketClashGame() {
   const roundTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const p1Ref = useRef<RocketState>({
-    y: 130, // Starts in upper half (Bull territory)
+    y: 130, // Upper half (Bull zone)
     vy: 0,
     tilt: 0,
     thrusting: false,
@@ -117,7 +119,7 @@ export function RocketClashGame() {
   });
 
   const p2Ref = useRef<RocketState>({
-    y: 310, // Starts in lower half (Bear territory)
+    y: 310, // Lower half (Bear zone)
     vy: 0,
     tilt: 0,
     thrusting: false,
@@ -206,8 +208,10 @@ export function RocketClashGame() {
     setStrikePrice(lockedPrice);
     strikePriceRef.current = lockedPrice;
 
-    // Determine sides based on mode
-    const p1Side = gameMode === "solo" ? playerStance : "BULL";
+    // Set player sides based on gameMode:
+    // In Versus: P1 is BULL (🟣), P2 is BEAR (🐸)
+    // In Solo: P1 chooses stance (BULL or BEAR), opponent is House
+    const p1Side = gameMode === "versus" ? "BULL" : playerStance;
     const p2Side = p1Side === "BULL" ? "BEAR" : "BULL";
 
     p1Ref.current = {
@@ -252,25 +256,35 @@ export function RocketClashGame() {
         soundEngine.stopThrust();
         soundEngine.playVictoryJingle();
 
-        // ORACLE VICTORY EVALUATION AT T=0
+        // ORACLE VICTORY EVALUATION AT EXACT SECOND 00:00
         const finalPrice = currentPriceRef.current;
         const initial = strikePriceRef.current;
-        const outcomeSide: "BULL" | "BEAR" = finalPrice >= initial ? "BULL" : "BEAR";
+
+        // Decimal precision check for exact draw
+        const isDraw = Math.abs(finalPrice - initial) < 0.00000001;
+        if (isDraw) {
+          setWinningSide("DRAW");
+          setWinner("DRAW");
+          return;
+        }
+
+        const outcomeSide: "BULL" | "BEAR" = finalPrice > initial ? "BULL" : "BEAR";
         setWinningSide(outcomeSide);
 
-        if (gameMode === "solo") {
-          // Solo: Player vs House
+        if (gameMode === "versus") {
+          // P2P 1v1 Mode: Escrow Winner Takes All
+          // P1 is always Bull, P2 is always Bear
+          if (outcomeSide === "BULL") {
+            setWinner("P1");
+          } else {
+            setWinner("P2");
+          }
+        } else {
+          // Solo vs House Mode
           if (p1Ref.current.side === outcomeSide) {
             setWinner("P1");
           } else {
             setWinner("HOUSE");
-          }
-        } else {
-          // Versus: P1 (Bull) vs P2 (Bear)
-          if (p1Ref.current.side === outcomeSide) {
-            setWinner("P1");
-          } else {
-            setWinner("P2");
           }
         }
       }
@@ -294,14 +308,13 @@ export function RocketClashGame() {
       const height = canvas.height;
       const strikeCenterY = height * 0.5;
 
-      // 1. UPDATE PHYSICS & MULTIPLIER CHARGE
+      // 1. UPDATE PHYSICS & TELEMETRY
       if (gameState === "playing") {
-        // Solo Mode AI behavior: tries to stay in its target zone
+        // Solo Mode AI behavior: tries to stay in its assigned zone
         if (gameMode === "solo") {
           const p2 = p2Ref.current;
-          // Target altitude: center of its respective zone
           const targetY = p2.side === "BULL" ? height * 0.25 : height * 0.75;
-          const targetJitter = targetY + Math.sin(time * 0.003) * 20;
+          const targetJitter = targetY + Math.sin(time * 0.003) * 18;
           const distance = p2.y - targetJitter;
 
           if (distance > 6 && p2.vy > -1.2) {
@@ -359,7 +372,6 @@ export function RocketClashGame() {
 
           if (inValidZone) {
             r.chargeTime += dt;
-            // Multiplier climbs from 1.0x to 5.0x based on time spent in target zone
             const maxSecondsFor5x = selectedDuration * 0.75;
             r.multiplier = Math.min(5.0, 1.0 + (r.chargeTime / maxSecondsFor5x) * 4.0);
             if (Math.random() < 0.05) soundEngine.playScorePing();
@@ -528,7 +540,7 @@ export function RocketClashGame() {
           ctx.fill();
         }
 
-        // Active Zone multiplier aura
+        // Active Zone aura
         if (r.inZone) {
           ctx.strokeStyle = r.side === "BULL" ? "rgba(20, 207, 28, 0.6)" : "rgba(239, 68, 68, 0.6)";
           ctx.lineWidth = 2.5;
@@ -582,14 +594,13 @@ export function RocketClashGame() {
         ctx.font = "11px sans-serif";
         ctx.fillText(r.avatar, -3.5, 4);
 
-        // Player Tag & Multiplier Badge
+        // Player Tag
         ctx.font = "bold 9px system-ui, sans-serif";
         ctx.fillStyle = r.inZone ? (r.side === "BULL" ? "#059669" : "#DC2626") : "#64748B";
-        ctx.fillText(
-          `${r.name} [${r.side} ${r.multiplier.toFixed(1)}x]`,
-          -32,
-          -18
-        );
+        const tagLabel = gameMode === "versus"
+          ? `${r.name} [${r.side}]`
+          : `${r.name} [${r.side} ${r.multiplier.toFixed(1)}x]`;
+        ctx.fillText(tagLabel, -32, -18);
 
         ctx.restore();
       };
@@ -634,9 +645,13 @@ export function RocketClashGame() {
   const isDeltaPositive = livePriceDelta >= 0;
   const roundProgressPercent = Math.max(0, Math.min(100, ((selectedDuration - timeLeft) / selectedDuration) * 100));
 
-  // Dynamic Payout estimation
-  const potentialP1Payout = (stakeMon * p1Telemetry.mult).toFixed(3);
-  const potentialP2Payout = (stakeMon * p2Telemetry.mult).toFixed(3);
+  // 1v1 P2P Pot Economics (Strict Escrow Parity)
+  const totalEscrowPot = (stakeMon * 2).toFixed(3);
+  const protocolFee = (stakeMon * 2 * 0.025).toFixed(4);
+  const p2pWinnerPayout = ((stakeMon * 2) * 0.975).toFixed(3);
+
+  // Solo House Economics (Vault-backed Multiplier)
+  const soloMultiplierPayout = (stakeMon * p1Telemetry.mult).toFixed(3);
 
   // Render SVG mini price sparkline with Strike line
   const sparklineSVG = useMemo(() => {
@@ -756,7 +771,7 @@ export function RocketClashGame() {
         </div>
       </header>
 
-      {/* 2. THE GOLDEN RULE BANNER (Crystal-Clear Win Condition) */}
+      {/* 2. MODE-AWARE ECONOMIC BANNER */}
       <div className={`w-full px-4 py-2 rounded-2xl mb-3 border text-center transition-all ${
         isFinalTenSeconds
           ? "bg-amber-50 border-amber-300 text-amber-900 shadow-md animate-pulse"
@@ -766,15 +781,21 @@ export function RocketClashGame() {
           {isFinalTenSeconds ? (
             <>
               <AlertTriangle className="w-4 h-4 text-amber-600" />
-              <span>FINAL 10s VOLATILITY: ORACLE FREEZES WINNER AT 00:00!</span>
+              <span>FINAL 10s VOLATILITY: PYTH ORACLE SETTLES WINNER AT 00:00!</span>
+            </>
+          ) : gameMode === "versus" ? (
+            <>
+              <Scale className="w-3.5 h-3.5 text-[#6E4EF4]" />
+              <span className="text-emerald-700 font-bold">P1 = BULL (UP)</span>
+              <span className="text-slate-300">•</span>
+              <span className="text-red-600 font-bold">P2 = BEAR (DOWN)</span>
+              <span className="text-slate-300">•</span>
+              <span className="text-slate-800 font-medium">Winner takes exact <strong>{p2pWinnerPayout} MON</strong> pot (Fair Escrow)</span>
             </>
           ) : (
             <>
-              <span className="text-emerald-700 font-bold">▲ BULL WINS</span> if price ends ABOVE Strike
-              <span className="text-slate-300">•</span>
-              <span className="text-red-600 font-bold">▼ BEAR WINS</span> if price ends BELOW Strike
-              <span className="text-slate-300">•</span>
-              <span className="text-[#6E4EF4] font-medium">Hold rocket in your zone to charge Multiplier (up to 5x)</span>
+              <Coins className="w-3.5 h-3.5 text-amber-600" />
+              <span>SOLO VS HOUSE VAULT: Hold thruster in your zone to pump <strong>1x to 5x payout multiplier</strong>!</span>
             </>
           )}
         </div>
@@ -864,7 +885,7 @@ export function RocketClashGame() {
           />
         </div>
 
-        {/* Floating Top HUD: P1, Match Duration Timer, P2 */}
+        {/* Floating Top HUD: P1, Match Timer, P2 */}
         <div className="absolute top-3 left-0 right-0 px-4 sm:px-6 flex items-center justify-between pointer-events-none">
           {/* Player 1 HUD Card */}
           <div
@@ -880,12 +901,18 @@ export function RocketClashGame() {
                 P1 • {p1Ref.current.side}
               </div>
               <div className="text-xs sm:text-sm font-bold font-mono text-slate-900 flex items-center gap-1.5">
-                {p1Telemetry.mult}x
-                <span className="text-[10px] font-normal text-slate-500 font-mono">
-                  ({potentialP1Payout}M)
-                </span>
+                {gameMode === "versus" ? (
+                  <span>POT: {p2pWinnerPayout}M</span>
+                ) : (
+                  <>
+                    {p1Telemetry.mult}x
+                    <span className="text-[10px] font-normal text-slate-500 font-mono">
+                      ({soloMultiplierPayout}M)
+                    </span>
+                  </>
+                )}
               </div>
-              {/* Charge progress mini bar */}
+              {/* Mastery bar */}
               <div className="w-16 h-1 bg-slate-200 rounded-full mt-1 overflow-hidden">
                 <div
                   className="h-full bg-[#836EF9] transition-all"
@@ -895,7 +922,7 @@ export function RocketClashGame() {
             </div>
           </div>
 
-          {/* Central Match Timer & Status */}
+          {/* Central Match Timer & Dynamic State */}
           <div className={`flex flex-col items-center px-4 py-1.5 rounded-2xl border backdrop-blur-md shadow-sm transition-all ${
             isFinalTenSeconds
               ? "bg-amber-500/15 border-amber-400/80 text-amber-950 scale-105"
@@ -914,7 +941,7 @@ export function RocketClashGame() {
             </div>
           </div>
 
-          {/* Player 2 / Bot HUD Card */}
+          {/* Player 2 / Opponent HUD Card */}
           <div
             className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border backdrop-blur-md transition-all shadow-sm ${
               p2Telemetry.inZone
@@ -924,15 +951,18 @@ export function RocketClashGame() {
           >
             <div>
               <div className="text-[10px] font-bold text-emerald-600 uppercase text-right leading-none">
-                {gameMode === "solo" ? "AI • " + p2Ref.current.side : "P2 • " + p2Ref.current.side}
+                {gameMode === "solo" ? "HOUSE VAULT" : "P2 • " + p2Ref.current.side}
               </div>
               <div className="text-xs sm:text-sm font-bold font-mono text-slate-900 flex items-center gap-1.5 justify-end">
-                <span className="text-[10px] font-normal text-slate-500 font-mono">
-                  ({potentialP2Payout}M)
-                </span>
-                {p2Telemetry.mult}x
+                {gameMode === "versus" ? (
+                  <span>POT: {p2pWinnerPayout}M</span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-slate-600">
+                    BANKER
+                  </span>
+                )}
               </div>
-              {/* Charge progress mini bar */}
+              {/* Mastery bar */}
               <div className="w-16 h-1 bg-slate-200 rounded-full mt-1 overflow-hidden ml-auto">
                 <div
                   className="h-full bg-emerald-500 transition-all"
@@ -940,25 +970,47 @@ export function RocketClashGame() {
                 />
               </div>
             </div>
-            <span className="text-xl">🐸</span>
+            <span className="text-xl">{gameMode === "solo" ? "🏦" : "🐸"}</span>
           </div>
         </div>
 
-        {/* Start Overlay / Lobby Screen (Clean Apple Card) */}
+        {/* Start Overlay / Lobby Screen */}
         {gameState === "idle" && (
           <div className="absolute inset-0 bg-white/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-10">
             <div className="inline-flex p-3 rounded-2xl bg-[#836EF9]/10 text-[#6E4EF4] mb-2.5">
               <Flame className="w-7 h-7 text-[#836EF9]" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight mb-1">
-              Rocket Clash: Bull vs Bear
+              Rocket Clash Arena
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 max-w-md mb-4 leading-relaxed">
-              At second 00:00, the <strong>Pyth Oracle price decides the winner</strong>. Hold thrusters to keep your rocket in your territory and charge your <strong>payout multiplier up to 5.0x</strong>!
+              {gameMode === "versus"
+                ? "1v1 Escrow Battle: P1 is Bull, P2 is Bear. At 00:00, whoever holds the winning side takes the entire 0.488 MON pot!"
+                : "Solo Arcade: Predict Bull or Bear against the House Vault. Hold thrusters in your territory to multiply your payout up to 5.0x!"}
             </p>
 
-            {/* Round Settings Row */}
+            {/* Mode & Settings Row */}
             <div className="flex flex-wrap items-center justify-center gap-3 mb-5">
+              {/* Game Mode Selector */}
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                <button
+                  onClick={() => setGameMode("versus")}
+                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    gameMode === "versus" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5 text-[#6E4EF4]" /> 1v1 P2P Duel
+                </button>
+                <button
+                  onClick={() => setGameMode("solo")}
+                  className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    gameMode === "solo" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5 text-amber-600" /> Solo vs House
+                </button>
+              </div>
+
               {/* Duration Selector */}
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
                 <span className="text-[10px] font-medium text-slate-500 px-2 flex items-center gap-1">
@@ -979,10 +1031,10 @@ export function RocketClashGame() {
                 ))}
               </div>
 
-              {/* Player Stance (In Solo Mode) */}
+              {/* Player Stance (Only in Solo Mode) */}
               {gameMode === "solo" && (
                 <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                  <span className="text-[10px] font-medium text-slate-500 px-2">YOUR SIDE:</span>
+                  <span className="text-[10px] font-medium text-slate-500 px-2">YOUR PREDICTION:</span>
                   <button
                     onClick={() => setPlayerStance("BULL")}
                     className={`flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
@@ -1007,33 +1059,13 @@ export function RocketClashGame() {
                   </button>
                 </div>
               )}
-
-              {/* Game Mode */}
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                <button
-                  onClick={() => setGameMode("solo")}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                    gameMode === "solo" ? "bg-white text-slate-900 shadow-sm font-semibold" : "text-slate-500"
-                  }`}
-                >
-                  <User className="w-3 h-3" /> Solo vs AI
-                </button>
-                <button
-                  onClick={() => setGameMode("versus")}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                    gameMode === "versus" ? "bg-white text-slate-900 shadow-sm font-semibold" : "text-slate-500"
-                  }`}
-                >
-                  <Users className="w-3 h-3" /> 1v1 Split
-                </button>
-              </div>
             </div>
 
             <button
               onClick={startGame}
               className="px-8 py-3 rounded-2xl bg-[#6E4EF4] hover:bg-[#5E3DE0] text-white font-semibold text-sm tracking-wide shadow-md shadow-purple-500/20 active:scale-[0.98] transition-all"
             >
-              Launch {selectedDuration}s Clash Round
+              {gameMode === "versus" ? `Start 1v1 Clash (${selectedDuration}s)` : `Play Solo vs House (${selectedDuration}s)`}
             </button>
           </div>
         )}
@@ -1042,42 +1074,58 @@ export function RocketClashGame() {
         {gameState === "gameover" && (
           <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-10 animate-fade-in">
             <div className={`p-3.5 rounded-2xl mb-2 ${
-              winner === "P1" ? "bg-emerald-500/15 text-emerald-600" : "bg-red-500/15 text-red-600"
+              winner === "DRAW"
+                ? "bg-slate-100 text-slate-700"
+                : winner === "P1"
+                ? "bg-emerald-500/15 text-emerald-600"
+                : "bg-red-500/15 text-red-600"
             }`}>
-              {winner === "P1" ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
+              {winner === "DRAW" ? <Scale className="w-8 h-8" /> : winner === "P1" ? <CheckCircle2 className="w-8 h-8" /> : <XCircle className="w-8 h-8" />}
             </div>
 
             <div className="text-[11px] font-mono text-slate-500 uppercase tracking-widest mb-1">
-              Oracle Settled at 00:00
+              Pyth Oracle Final Settlement
             </div>
 
             <h3 className="text-2xl font-bold text-slate-900 mb-1">
-              {winner === "P1"
-                ? "You Won! 🎉"
-                : winner === "P2"
+              {winner === "DRAW"
+                ? "Exact Draw! ⚖️ Stakes Refunded"
+                : winner === "P1"
+                ? "P1 Won the Clash! 🎉"
+                : gameMode === "versus"
                 ? "P2 Won the Clash! 🐸"
-                : "Oracle House Won 💥"}
+                : "House Vault Won 💥"}
             </h3>
 
             <p className="text-xs text-slate-600 mb-4 font-mono">
               Strike: ${strikePrice.toFixed(2)} → Final: ${currentPrice.toFixed(2)} (
-              <span className={winningSide === "BULL" ? "text-emerald-600 font-bold" : "text-red-500 font-bold"}>
-                {winningSide === "BULL" ? "▲ BULL WON" : "▼ BEAR WON"}
+              <span className={winningSide === "BULL" ? "text-emerald-600 font-bold" : winningSide === "BEAR" ? "text-red-500 font-bold" : "text-slate-600"}>
+                {winningSide === "BULL" ? "▲ BULL WON" : winningSide === "BEAR" ? "▼ BEAR WON" : "TIE"}
               </span>
               )
             </p>
 
             <div className="grid grid-cols-2 gap-3 w-full max-w-xs mb-5">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
-                <div className="text-[10px] text-slate-500 font-mono">P1 MULTIPLIER</div>
+                <div className="text-[10px] text-slate-500 font-mono">
+                  {gameMode === "versus" ? "SETTLED POT" : "MULTIPLIER"}
+                </div>
                 <div className="text-lg font-bold text-slate-900 font-mono tabular-nums">
-                  {p1Ref.current.multiplier.toFixed(2)}x
+                  {gameMode === "versus" ? `${totalEscrowPot} MON` : `${p1Ref.current.multiplier.toFixed(2)}x`}
                 </div>
               </div>
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-center">
-                <div className="text-[10px] text-slate-500 font-mono">PAYOUT</div>
+                <div className="text-[10px] text-slate-500 font-mono">WINNER PAYOUT</div>
                 <div className="text-lg font-bold text-emerald-600 font-mono tabular-nums">
-                  {winner === "P1" ? `${potentialP1Payout} MON` : "0.000 MON"}
+                  {winner === "DRAW"
+                    ? `${stakeMon} MON (Refund)`
+                    : winner === "P1"
+                    ? gameMode === "versus"
+                      ? `${p2pWinnerPayout} MON`
+                      : `${soloMultiplierPayout} MON`
+                    : gameMode === "versus"
+                    ? `${p2pWinnerPayout} MON`
+                    : "0.000 MON"}
                 </div>
               </div>
             </div>
@@ -1109,7 +1157,7 @@ export function RocketClashGame() {
             </div>
             <div className="text-left">
               <div className="text-xs font-semibold text-[#6E4EF4]">
-                P1 ({p1Ref.current.side}) • Hold to Fly & Charge Multiplier
+                P1 ({p1Ref.current.side}) • Hold Thrusters to Fly
               </div>
               <div className="text-xs font-mono text-slate-500">HOLD [SPACE] / [W] / TAP</div>
             </div>
@@ -1117,7 +1165,7 @@ export function RocketClashGame() {
           <Flame className="w-5 h-5 text-amber-500 group-active:scale-125 transition-transform" />
         </button>
 
-        {/* P2 Controls Button (Versus mode or Auto AI in Solo) */}
+        {/* P2 Controls Button (Versus mode or House in Solo) */}
         {gameMode === "versus" ? (
           <button
             onPointerDown={handleP2PointerDown}
@@ -1132,7 +1180,7 @@ export function RocketClashGame() {
               </div>
               <div className="text-left">
                 <div className="text-xs font-semibold text-emerald-700">
-                  P2 ({p2Ref.current.side}) • Hold to Fly & Charge Multiplier
+                  P2 ({p2Ref.current.side}) • Hold Thrusters to Fly
                 </div>
                 <div className="text-xs font-mono text-slate-500">HOLD [ARROW UP] / TAP</div>
               </div>
@@ -1142,50 +1190,50 @@ export function RocketClashGame() {
         ) : (
           <div className="p-4 rounded-2xl bg-slate-50 border border-black/[0.04] flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-slate-200/60 flex items-center justify-center text-xl">
-                🤖
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-xl">
+                🏦
               </div>
               <div>
-                <div className="text-xs font-semibold text-slate-800">AI Oracle Rival ({p2Ref.current.side})</div>
-                <div className="text-xs text-slate-500 font-mono">Opposite side competitor</div>
+                <div className="text-xs font-semibold text-slate-800">Protocol House Vault</div>
+                <div className="text-xs text-slate-500 font-mono">Backing up to 5x multiplier payouts</div>
               </div>
             </div>
-            <div className="text-[10px] font-mono px-2 py-1 rounded bg-slate-200/80 text-slate-700 font-semibold">
-              BOT ACTIVE
+            <div className="text-[10px] font-mono px-2 py-1 rounded bg-amber-100 text-amber-800 font-semibold">
+              LIQUIDITY ACTIVE
             </div>
           </div>
         )}
       </div>
 
-      {/* 6. Apple Design Info Cards */}
+      {/* 6. Apple Design Financial Architecture Cards */}
       <div className="w-full mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Zap className="w-3.5 h-3.5 text-[#6E4EF4]" />
-            Last-Second Volatility Drama
+            <ShieldCheck className="w-3.5 h-3.5 text-[#6E4EF4]" />
+            Zero-Deficit Escrow (1v1)
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            The final price tick at 00:00 decides the winner. Even a 0.01% candle reversal turns the entire round!
+            In P2P duels, the winner takes the exact locked pot (0.488 MON net). Neither player can ever lose more than their deposited stake.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-            Active Leverage Charging
+            <Coins className="w-3.5 h-3.5 text-amber-600" />
+            Vault-Backed Multipliers (Solo)
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            Hold your rocket in your territory (Bull upper / Bear lower) to boost your win multiplier from 1.0x to 5.0x.
+            In Solo mode, holding your rocket in the target zone charges up to 5x leverage backed directly by the Protocol Liquidity Vault.
           </p>
         </div>
 
         <div className="p-4 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
           <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5 mb-1">
-            <Coins className="w-3.5 h-3.5 text-amber-500" />
-            House Monetization
+            <Scale className="w-3.5 h-3.5 text-emerald-600" />
+            Oracle Determinism & Draw Policy
           </div>
           <p className="text-xs text-slate-500 leading-relaxed">
-            2.5% protocol cut flows automatically into the Duelio House Treasury upon clash settlement.
+            At 00:00, Pyth price feed determines the winning direction. Any exact price tie refunds 100% of stakes with zero fees.
           </p>
         </div>
       </div>
