@@ -188,6 +188,11 @@ function persistToDisk(): void {
       duels: duelRecords,
     };
 
+    const dir = path.dirname(STORE_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
     const tmpFile = `${STORE_FILE}.tmp.${Date.now()}`;
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), "utf8");
     fs.renameSync(tmpFile, STORE_FILE);

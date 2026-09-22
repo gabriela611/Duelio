@@ -41,11 +41,14 @@ Thumbs.db
 
 # Local agent and workspace metadata
 .agents/
+agent/
+skills-lock.json
 .atl/
 .codex/
 .claude/
 .opencode/
 .codegraph/
+.mcp.json
 
 # Local ODD planning artifacts
 odd/

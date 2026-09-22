@@ -1,33 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getAllChallenges,
-  saveChallenge,
-  getServerReactions,
-  getServerReposts,
-} from "@/infrastructure/social/socialStore";
+import { getSocialRepository } from "@/infrastructure/social";
 import { normalizeAddress } from "@/domain/social/identity";
+import { authenticateRequest } from "@/infrastructure/auth/privyServer";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const viewerAddress = searchParams.get("viewerAddress") || undefined;
+    const viewerAddress = searchParams.get("viewerAddress");
+    const tab = (searchParams.get("tab") as any) || "forYou";
 
-    const rawChallenges = getAllChallenges();
-    const feed = rawChallenges.map((ch) => {
-      const { isLiked, count: likesCount } = getServerReactions(ch.id, viewerAddress);
-      const { isReposted, count: repostsCount } = getServerReposts(ch.id, viewerAddress);
-      return {
-        ...ch,
-        content: ch.content || ch.description,
-        reactionsCount: likesCount,
-        likesCount,
-        isLiked,
-        repostsCount,
-        isReposted,
-        repliesCount: ch.replies ? ch.replies.length : 0,
-        replies: ch.replies || [],
-      };
-    });
+    const repo = getSocialRepository();
+    const feed = await repo.getFeed(viewerAddress || undefined, tab);
 
     return NextResponse.json({ success: true, feed });
   } catch (error: any) {
@@ -40,8 +23,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await authenticateRequest(request, { required: false });
     const body = await request.json();
-    const { authorAddress, content, title, description, asset, stakeMon, duelId, kind } = body;
+    let { authorAddress, content, title, description, asset, stakeMon, duelId, kind } = body;
+
+    if (session?.walletAddress) {
+      if (authorAddress && normalizeAddress(authorAddress) !== session.walletAddress) {
+        return NextResponse.json(
+          { success: false, error: "FORBIDDEN: Wallet spoofing detected. Authenticated wallet does not match authorAddress" },
+          { status: 403 }
+        );
+      }
+      authorAddress = session.walletAddress;
+    }
 
     const postContent = content || description || title;
     if (!authorAddress || !postContent) {
@@ -60,7 +54,8 @@ export async function POST(request: NextRequest) {
     }
 
     const isChallenge = Boolean(stakeMon || duelId || kind === "challenges");
-    const record = saveChallenge({
+    const repo = getSocialRepository();
+    const record = await repo.createPost({
       authorAddress: normalized,
       title: title ? String(title).slice(0, 140) : String(postContent).slice(0, 70),
       description: String(postContent).slice(0, 280),

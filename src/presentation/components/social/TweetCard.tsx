@@ -9,8 +9,11 @@ import {
   Check,
   Swords,
   Send,
-  ArrowUpRight,
+  MoreHorizontal,
   TrendingUp,
+  ExternalLink,
+  Copy,
+  User,
 } from "lucide-react";
 import { AssetLogo } from "@/presentation/components/common/AssetLogo";
 import type { SocialPost, TweetReply } from "@/domain/social/socialService";
@@ -35,7 +38,7 @@ function formatTweetContent(text: string) {
       return (
         <span
           key={index}
-          className="font-bold text-monad-600 dark:text-monad-400 hover:underline cursor-pointer"
+          className="font-bold text-monad-600 hover:underline cursor-pointer"
         >
           {part}
         </span>
@@ -78,6 +81,7 @@ export const TweetCard: React.FC<TweetCardProps> = ({
   const [isSubmittingReply, setIsSubmittingReply] = useState(false);
 
   const [copied, setCopied] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
 
   const handleLike = () => {
     setIsLiked(!isLiked);
@@ -120,14 +124,15 @@ export const TweetCard: React.FC<TweetCardProps> = ({
   };
 
   const authorShort = post.authorName || `${post.authorAddress.slice(0, 6)}…${post.authorAddress.slice(-4)}`;
-  const handleShort = `@${post.authorAddress.slice(0, 6)}…${post.authorAddress.slice(-4)}`;
   const isChallenge = post.isLiveChallenge || post.kind === "challenges";
   const isSettledDuel = post.kind === "duels";
+  const assetSymbol = (post.asset || "BTC") as "BTC" | "ETH" | "SOL" | "MON";
+  const stakeMon = post.stakeMon || 0.1;
 
   return (
     <article
       id={`post-${post.id}`}
-      className="border-b border-border/70 hover:bg-surface-secondary/20 transition-colors px-4 py-3.5 sm:px-6"
+      className="border-b border-border/60 hover:bg-surface-secondary/25 transition-colors px-4 py-3.5 sm:px-6"
     >
       <div className="flex gap-3">
         {/* Author Avatar */}
@@ -135,18 +140,18 @@ export const TweetCard: React.FC<TweetCardProps> = ({
           <button
             type="button"
             onClick={() => onProfileClick?.(post.authorAddress, post.authorName, post.authorInitials)}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-secondary border border-border text-xs font-bold font-mono text-monad-700 hover:ring-2 hover:ring-monad-500/30 active:scale-95 transition-all shadow-sm"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-secondary border border-border text-xs font-bold font-mono text-monad-700 hover:ring-2 hover:ring-monad-500/30 active:scale-95 transition-all shadow-2xs"
             aria-label={`View profile for ${authorShort}`}
           >
             {post.authorInitials}
           </button>
         </div>
 
-        {/* Tweet Content & Actions Column */}
+        {/* Content Column */}
         <div className="flex-1 min-w-0">
-          {/* Tweet Header Line */}
-          <div className="flex items-center justify-between gap-1 flex-wrap">
-            <div className="flex items-center gap-1.5 min-w-0">
+          {/* Top Line: Username + Relative Time + More Actions Menu */}
+          <div className="flex items-center justify-between gap-1">
+            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
               <button
                 type="button"
                 onClick={() => onProfileClick?.(post.authorAddress, post.authorName, post.authorInitials)}
@@ -154,67 +159,144 @@ export const TweetCard: React.FC<TweetCardProps> = ({
               >
                 {authorShort}
               </button>
-              <span className="text-xs text-text-tertiary font-mono truncate hidden sm:inline">
-                {handleShort}
-              </span>
-              <span className="text-xs text-text-tertiary">·</span>
-              <span className="text-xs text-text-tertiary whitespace-nowrap">
+              <span className="text-xs text-text-tertiary">
                 {formatRelativeTime(post.timestamp)}
               </span>
             </div>
 
-            {/* Kind Badge */}
-            {isChallenge && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-monad-50 text-monad-700 border border-monad-200">
-                <Swords size={11} />
-                <span>Arena Duel</span>
-              </span>
-            )}
-            {isSettledDuel && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-positive/10 text-positive border border-positive/20">
-                <TrendingUp size={11} />
-                <span>Match Settled</span>
-              </span>
-            )}
+            {/* Context Menu Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowMenu(!showMenu)}
+                className="p-1 rounded-lg text-text-tertiary hover:text-text-primary hover:bg-surface-secondary/60 transition-colors"
+                aria-label="Post actions"
+              >
+                <MoreHorizontal size={16} />
+              </button>
+
+              {showMenu && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-44 rounded-xl bg-surface border border-border shadow-elevated py-1 z-20 text-xs font-medium animate-in fade-in zoom-in-95 duration-100"
+                  onMouseLeave={() => setShowMenu(false)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleCopyLink();
+                      setShowMenu(false);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-surface-secondary text-text-primary transition-colors"
+                  >
+                    <Copy size={13} />
+                    <span>Copy link to post</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onProfileClick?.(post.authorAddress, post.authorName, post.authorInitials);
+                      setShowMenu(false);
+                    }}
+                    className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-surface-secondary text-text-primary transition-colors"
+                  >
+                    <User size={13} />
+                    <span>View player profile</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Tweet Body Text */}
-          <p className="mt-1 text-sm sm:text-[15px] text-text-primary leading-relaxed break-words whitespace-pre-wrap">
-            {formatTweetContent(post.content || post.description || post.title)}
-          </p>
+          {/* Action Activity Headline (Zapper-style: e.g. "Bought 77M REGENT for $2,124") */}
+          {isChallenge ? (
+            <div className="mt-1">
+              <div className="text-sm font-semibold text-text-primary flex items-center gap-1.5 flex-wrap">
+                <span>Opened 30s Arena Challenge in</span>
+                <span className="font-bold">{assetSymbol}/USD</span>
+                <span>for</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-monad-50 text-monad-700 font-mono font-bold text-xs border border-monad-200">
+                  {stakeMon} MON
+                </span>
+              </div>
+              <div className="flex items-center gap-1 text-[11px] text-text-secondary mt-0.5">
+                <span className="text-monad-600 font-semibold">⚔️ Open for Rival</span>
+                <span>·</span>
+                <span>Monad Testnet Escrow</span>
+              </div>
+            </div>
+          ) : isSettledDuel ? (
+            <div className="mt-1">
+              <div className="text-sm font-semibold text-text-primary flex items-center gap-1.5 flex-wrap">
+                <span>Won 30s Duel Clash on</span>
+                <span className="font-bold">{assetSymbol}</span>
+                <span>for</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-positive/10 text-positive font-mono font-bold text-xs border border-positive/20">
+                  +{(stakeMon * 1.95).toFixed(2)} MON
+                </span>
+              </div>
+              <div className="flex items-center gap-1 text-[11px] text-text-secondary mt-0.5">
+                <span className="text-positive font-semibold">▲ Settled Outcome</span>
+                <span>·</span>
+                <span>100% On-Chain</span>
+              </div>
+            </div>
+          ) : null}
 
-          {/* Embedded Arena Challenge / Match Card */}
-          {isChallenge && (
-            <div className="mt-2.5 p-3 rounded-2xl bg-monad-50/60 border border-monad-200/80 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <AssetLogo symbol={(post.asset || "BTC") as any} size={22} />
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-text-primary">
-                      {post.asset || "BTC"}/USD 30s Clash
+          {/* Post Content / Alpha Description (if available) */}
+          {(post.content || (!isChallenge && !isSettledDuel && (post.description || post.title))) && (
+            <p className="mt-1.5 text-sm sm:text-[15px] text-text-primary leading-relaxed break-words whitespace-pre-wrap">
+              {formatTweetContent(post.content || post.description || post.title || "")}
+            </p>
+          )}
+
+          {/* Embedded Token / Duel Card (Zapper-style embed) */}
+          {(isChallenge || isSettledDuel || post.asset) && (
+            <div className="mt-2.5 p-3 rounded-2xl bg-surface-secondary/40 hover:bg-surface-secondary/70 border border-border/80 flex items-center justify-between gap-3 transition-colors">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-surface border border-border/70 flex items-center justify-center shrink-0 shadow-2xs">
+                  <AssetLogo symbol={assetSymbol} size={22} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-text-primary truncate">
+                      {assetSymbol}
                     </span>
-                    <span className="text-[11px] font-mono text-monad-700 font-bold bg-monad-100/80 px-1.5 py-0.2 rounded">
-                      {post.stakeMon || 0.1} MON
+                    <span className="text-[11px] font-mono text-text-tertiary">
+                      30s Speed Duel
                     </span>
                   </div>
-                  <span className="text-[11px] text-text-secondary">
-                    Monad Testnet Escrow • Real Settlement
-                  </span>
+                  <div className="text-xs text-text-secondary font-mono flex items-center gap-1.5 truncate">
+                    <span>Stake: {stakeMon} MON</span>
+                    <span className="text-text-tertiary">·</span>
+                    <span className="text-monad-600 font-semibold">1.95x Payout</span>
+                  </div>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => onAcceptChallenge?.(post.duelId)}
-                className="px-3.5 py-1.5 rounded-full bg-monad-600 hover:bg-monad-700 text-white text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95 transition-all"
-              >
-                <Swords size={13} />
-                <span>Accept</span>
-              </button>
+              {/* Action Button */}
+              {isChallenge ? (
+                <button
+                  type="button"
+                  onClick={() => onAcceptChallenge?.(post.duelId)}
+                  className="px-4 py-2 rounded-xl bg-monad-600 hover:bg-monad-700 active:scale-95 text-white text-xs font-bold shadow-soft transition-all shrink-0 flex items-center gap-1.5"
+                >
+                  <Swords size={13} />
+                  <span>Accept</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onAcceptChallenge?.(post.duelId)}
+                  className="px-4 py-2 rounded-xl bg-surface hover:bg-surface-secondary border border-border text-text-primary active:scale-95 text-xs font-bold shadow-2xs transition-all shrink-0 flex items-center gap-1.5"
+                >
+                  <TrendingUp size={13} />
+                  <span>Duel</span>
+                </button>
+              )}
             </div>
           )}
 
-          {/* Tweet Action Bar (Reply, Repost, Like, Share) */}
+          {/* Social Interaction Row (Reply, Repost, Like, Share) */}
           <div className="flex items-center justify-between max-w-md pt-2 mt-1 text-text-tertiary">
             {/* 1. Reply Button */}
             <button
@@ -226,7 +308,7 @@ export const TweetCard: React.FC<TweetCardProps> = ({
               <div className="p-1.5 rounded-full group-hover:bg-sky-50 transition-colors">
                 <MessageCircle size={15} />
               </div>
-              <span className={showReplies ? "text-sky-500 font-bold" : ""}>
+              <span className={`font-mono ${showReplies ? "text-sky-500 font-bold" : ""}`}>
                 {replies.length > 0 ? replies.length : ""}
               </span>
             </button>
@@ -236,14 +318,14 @@ export const TweetCard: React.FC<TweetCardProps> = ({
               type="button"
               onClick={handleRepost}
               className={`flex items-center gap-1.5 text-xs group transition-colors active:scale-95 ${
-                isReposted ? "text-emerald-500 font-bold" : "hover:text-emerald-500"
+                isReposted ? "text-positive font-bold" : "hover:text-positive"
               }`}
               aria-label="Repost"
             >
-              <div className="p-1.5 rounded-full group-hover:bg-emerald-50 transition-colors">
+              <div className="p-1.5 rounded-full group-hover:bg-positive/10 transition-colors">
                 <Repeat2 size={16} className={isReposted ? "rotate-180 transition-transform" : ""} />
               </div>
-              <span>{repostsCount > 0 ? repostsCount : ""}</span>
+              <span className="font-mono">{repostsCount > 0 ? repostsCount : ""}</span>
             </button>
 
             {/* 3. Like Button */}
@@ -258,7 +340,7 @@ export const TweetCard: React.FC<TweetCardProps> = ({
               <div className="p-1.5 rounded-full group-hover:bg-rose-50 transition-colors">
                 <Heart size={15} fill={isLiked ? "currentColor" : "none"} />
               </div>
-              <span>{likesCount > 0 ? likesCount : ""}</span>
+              <span className="font-mono">{likesCount > 0 ? likesCount : ""}</span>
             </button>
 
             {/* 4. Share Button */}
@@ -271,14 +353,13 @@ export const TweetCard: React.FC<TweetCardProps> = ({
               <div className="p-1.5 rounded-full group-hover:bg-monad-50 transition-colors">
                 {copied ? <Check size={15} className="text-positive" /> : <Share2 size={15} />}
               </div>
-              <span>{copied ? "Copied" : ""}</span>
+              <span className="text-[11px] font-medium">{copied ? "Copied" : ""}</span>
             </button>
           </div>
 
           {/* Inline Replies Thread */}
           {showReplies && (
             <div className="mt-3 pt-3 border-t border-border/50 space-y-3 animate-in fade-in duration-150">
-              {/* Existing Replies List */}
               {replies.length > 0 && (
                 <div className="space-y-2.5">
                   {replies.map((reply) => (
