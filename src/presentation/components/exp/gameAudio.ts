@@ -79,6 +79,37 @@ class SoundEngine {
     }
   }
 
+  public updateThrustIntensity(factor: number): void {
+    if (this.isMuted || !this.thrustOsc || !this.thrustGain || !this.ctx) return;
+    const baseFreq = 65;
+    const targetFreq = baseFreq + Math.min(Math.max(factor, 0) * 140, 220);
+    this.thrustOsc.frequency.linearRampToValueAtTime(targetFreq, this.ctx.currentTime + 0.05);
+    const targetGain = 0.01 + Math.min(Math.max(factor, 0) * 0.06, 0.08);
+    this.thrustGain.gain.linearRampToValueAtTime(targetGain, this.ctx.currentTime + 0.05);
+  }
+
+  public playHeartbeatThump(): void {
+    if (this.isMuted) return;
+    const ctx = this.initCtx();
+    if (!ctx) return;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(65, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(35, ctx.currentTime + 0.12);
+
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  }
+
   public playScorePing(): void {
     if (this.isMuted) return;
     const ctx = this.initCtx();
